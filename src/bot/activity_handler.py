@@ -28,6 +28,7 @@ from botbuilder.core import CardFactory, MessageFactory, TurnContext
 from botbuilder.core.teams import TeamsActivityHandler
 from botbuilder.schema import Attachment
 
+from src.agents import cleanup_coach as agent_cleanup_coach
 from src.agents import cpa_reviewer as agent_cpa_reviewer
 from src.agents import reconciliation as agent_reconciliation
 from src.agents import rollforward as agent_rollforward
@@ -61,6 +62,7 @@ from src.store.engagement_db import (
     DOC_BANK_STATEMENT,
     DOC_JOURNAL,
     DOC_PNL,
+    MODE_CLEANUP,
     PHASE_DELIVERED,
     Engagement,
     EngagementStore,
@@ -70,6 +72,7 @@ log = logging.getLogger(__name__)
 
 TEAMS_FILE_DOWNLOAD_INFO = "application/vnd.microsoft.teams.file.download.info"
 _TRIGGER_RE = re.compile(r"^\s*new\s+audit\s+(.+?)\s*$", re.IGNORECASE)
+_CLEANUP_TRIGGER_RE = re.compile(r"^\s*new\s+cleanup\s+(.+?)\s*$", re.IGNORECASE)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 _CARDS_DIR = Path(__file__).parent / "cards"
@@ -124,6 +127,13 @@ class AuditBot(TeamsActivityHandler):
             self._conversation_type(turn_context),
         )
 
+        # `new cleanup <period>` — start the cleanup coach flow
+        cleanup_match = _CLEANUP_TRIGGER_RE.match(text) if text else None
+        if cleanup_match:
+            await self._start_cleanup(turn_context, period=cleanup_match.group(1))
+            return
+
+        # `new audit <period>` — start the (existing) audit flow
         match = _TRIGGER_RE.match(text) if text else None
         if match:
             await self._start_engagement(turn_context, period=match.group(1))
@@ -132,9 +142,14 @@ class AuditBot(TeamsActivityHandler):
                 await self._post_intake_progress(turn_context)
             return
 
-        # Commands that operate on an active engagement
+        # Messages against an already-active engagement
         conversation_id = turn_context.activity.conversation.id
         engagement = self.store.get_active_engagement(conversation_id)
+
+        # Cleanup-mode engagement: every non-trigger message is a coach command
+        if engagement is not None and engagement.mode == MODE_CLEANUP:
+            await self._handle_cleanup_message(turn_context, engagement, text)
+            return
 
         if attachments:
             await self._handle_uploads(turn_context, attachments)
@@ -158,6 +173,57 @@ class AuditBot(TeamsActivityHandler):
         await turn_context.send_activity(MessageFactory.text(self._help_text()))
 
     # ---- triggers ---------------------------------------------------------
+
+    async def _start_cleanup(self, turn_context: TurnContext, period: str) -> None:
+        """Open a new engagement in cleanup mode and post the opening message + step 1."""
+        conversation_id = turn_context.activity.conversation.id
+        conversation_type = self._conversation_type(turn_context)
+        user_aad_id = self._user_aad_id(turn_context)
+
+        existing = self.store.get_active_engagement(conversation_id)
+        if existing is not None:
+            await turn_context.send_activity(
+                MessageFactory.text(
+                    f"An engagement is already active here "
+                    f"(id `{existing.engagement_id}`, mode `{existing.mode}`, "
+                    f"phase `{existing.phase}`). Close it before starting cleanup."
+                )
+            )
+            return
+
+        engagement = self.store.create_engagement(
+            conversation_id=conversation_id,
+            conversation_type=conversation_type,
+            user_aad_id=user_aad_id,
+            client_id=None,
+            period_description=period,
+            mode=MODE_CLEANUP,
+        )
+        log.info(
+            "cleanup.engagement_created id=%s conversation=%s period=%s",
+            engagement.engagement_id, conversation_id, period,
+        )
+
+        await turn_context.send_activity(
+            MessageFactory.text(agent_cleanup_coach.opening_message(period))
+        )
+        await turn_context.send_activity(
+            MessageFactory.text(agent_cleanup_coach.render_step(
+                agent_cleanup_coach.STEPS[0]
+            ))
+        )
+
+    async def _handle_cleanup_message(
+        self, turn_context: TurnContext, engagement: Engagement, text: str
+    ) -> None:
+        """Route a message to the cleanup coach and post its response."""
+        response = agent_cleanup_coach.handle_command(self.store, engagement, text)
+        await turn_context.send_activity(MessageFactory.text(response.text))
+        if response.cleanup_complete:
+            log.info(
+                "cleanup.handed_off engagement=%s period=%s",
+                engagement.engagement_id, engagement.period_description,
+            )
 
     async def _start_engagement(self, turn_context: TurnContext, period: str) -> None:
         conversation_id = turn_context.activity.conversation.id
@@ -863,9 +929,14 @@ class AuditBot(TeamsActivityHandler):
     @staticmethod
     def _help_text() -> str:
         return (
-            "Hi — I'm the Audit Bot. Start a new review with:\n\n"
-            "`new audit <period>` (example: `new audit Q3 2026`)\n\n"
-            "Then drop the Journal, Balance Sheet, P&L and Bank Statements into this chat."
+            "Hi — I'm the Audit Bot. I work in two modes:\n\n"
+            "🧹 **Cleanup mode** — I walk you through the 8-step bookkeeping cleanup SOP "
+            "before anything gets audited. Use when the books aren't period-closed yet.\n\n"
+            "`new cleanup <period>` (example: `new cleanup Q3 2026`)\n\n"
+            "🔍 **Audit mode** — I run four audit agents over your exported files and "
+            "produce a CPA review memo. Use after cleanup is done.\n\n"
+            "`new audit <period>` (example: `new audit Q3 2026`) then drop the Journal, "
+            "Balance Sheet, P&L (and optionally bank statements) and type `ready`."
         )
 
 

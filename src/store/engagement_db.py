@@ -27,12 +27,16 @@ DEFAULT_ROOT = Path(".tmp") / "engagements"
 INDEX_FILENAME = "_index.db"
 ENGAGEMENT_FILENAME = "engagement.db"
 
-PHASE_INTAKE = "intake"
+PHASE_CLEANUP = "cleanup"          # bookkeeper coached through cleanup SOP — no files yet
+PHASE_INTAKE = "intake"            # engagement open, awaiting file uploads
 PHASE_TAX_AUDIT = "tax_audit"
 PHASE_RECONCILIATION = "reconciliation"
 PHASE_ROLLFORWARD = "rollforward"
 PHASE_CPA_REVIEW = "cpa_review"
 PHASE_DELIVERED = "delivered"
+
+MODE_CLEANUP = "cleanup"
+MODE_AUDIT = "audit"
 
 DOC_JOURNAL = "journal"
 DOC_BALANCE_SHEET = "balance_sheet"
@@ -54,7 +58,9 @@ CREATE TABLE IF NOT EXISTS engagement_index (
     period_description TEXT,
     phase              TEXT NOT NULL,
     created_at         TEXT NOT NULL,
-    db_path            TEXT NOT NULL
+    db_path            TEXT NOT NULL,
+    mode               TEXT NOT NULL DEFAULT 'audit',
+    cleanup_step_index INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_engagement_conversation
@@ -99,6 +105,8 @@ class Engagement:
     phase: str
     created_at: str
     db_path: Path
+    mode: str = MODE_AUDIT           # MODE_CLEANUP or MODE_AUDIT
+    cleanup_step_index: int = 0      # 0..N-1 as the cleanup coach advances
 
 
 @dataclass(frozen=True)
@@ -112,6 +120,13 @@ class Document:
 
 def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat(timespec="microseconds")
+
+
+def _migrate_add_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
+    """Idempotently add a column to an existing table. No-op if the column exists."""
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
 
 
 @contextmanager
@@ -140,6 +155,8 @@ class EngagementStore:
     def _init_index(self) -> None:
         with _connect(self.index_path) as conn:
             conn.executescript(_INDEX_SCHEMA)
+            _migrate_add_column(conn, "engagement_index", "mode", "TEXT NOT NULL DEFAULT 'audit'")
+            _migrate_add_column(conn, "engagement_index", "cleanup_step_index", "INTEGER NOT NULL DEFAULT 0")
 
     def create_engagement(
         self,
@@ -148,13 +165,15 @@ class EngagementStore:
         user_aad_id: str | None = None,
         client_id: str | None = None,
         period_description: str | None = None,
+        mode: str = MODE_AUDIT,
     ) -> Engagement:
         engagement_id = uuid.uuid4().hex[:12]
         engagement_dir = self.root / engagement_id
         engagement_dir.mkdir(parents=True, exist_ok=True)
         db_path = engagement_dir / ENGAGEMENT_FILENAME
         created_at = _now_iso()
-        phase = PHASE_INTAKE
+        phase = PHASE_CLEANUP if mode == MODE_CLEANUP else PHASE_INTAKE
+        cleanup_step_index = 0
 
         with _connect(db_path) as conn:
             conn.executescript(_ENGAGEMENT_SCHEMA)
@@ -174,11 +193,13 @@ class EngagementStore:
                 """
                 INSERT INTO engagement_index
                     (engagement_id, client_id, conversation_id, conversation_type,
-                     user_aad_id, period_description, phase, created_at, db_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     user_aad_id, period_description, phase, created_at, db_path,
+                     mode, cleanup_step_index)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (engagement_id, client_id, conversation_id, conversation_type,
-                 user_aad_id, period_description, phase, created_at, str(db_path)),
+                 user_aad_id, period_description, phase, created_at, str(db_path),
+                 mode, cleanup_step_index),
             )
 
         return Engagement(
@@ -191,6 +212,8 @@ class EngagementStore:
             phase=phase,
             created_at=created_at,
             db_path=db_path,
+            mode=mode,
+            cleanup_step_index=cleanup_step_index,
         )
 
     def get_active_engagement(self, conversation_id: str) -> Engagement | None:
@@ -199,7 +222,8 @@ class EngagementStore:
             row = conn.execute(
                 """
                 SELECT engagement_id, client_id, conversation_id, conversation_type,
-                       user_aad_id, period_description, phase, created_at, db_path
+                       user_aad_id, period_description, phase, created_at, db_path,
+                       mode, cleanup_step_index
                 FROM engagement_index
                 WHERE conversation_id = ? AND phase != ?
                 ORDER BY created_at DESC, rowid DESC
@@ -219,7 +243,23 @@ class EngagementStore:
             phase=row["phase"],
             created_at=row["created_at"],
             db_path=Path(row["db_path"]),
+            mode=row["mode"] or MODE_AUDIT,
+            cleanup_step_index=row["cleanup_step_index"] or 0,
         )
+
+    def advance_cleanup_step(self, engagement_id: str, new_index: int) -> None:
+        with _connect(self.index_path) as conn:
+            conn.execute(
+                "UPDATE engagement_index SET cleanup_step_index = ? WHERE engagement_id = ?",
+                (new_index, engagement_id),
+            )
+
+    def set_mode(self, engagement_id: str, mode: str) -> None:
+        with _connect(self.index_path) as conn:
+            conn.execute(
+                "UPDATE engagement_index SET mode = ? WHERE engagement_id = ?",
+                (mode, engagement_id),
+            )
 
     def update_phase(self, engagement_id: str, phase: str) -> None:
         with _connect(self.index_path) as conn:
