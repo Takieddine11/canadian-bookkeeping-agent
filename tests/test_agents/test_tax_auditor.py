@@ -148,6 +148,69 @@ def test_customer_invoices_dont_pollute_vendor_analysis(
     assert top is None or "Acme Customer" not in (top.detail or "")
 
 
+def test_quick_method_pattern_detected_when_all_vendors_at_zero(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """5 material vendors, all 0% implied rate -> Quick Method pattern finding."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+
+    rows = []
+    for i, vendor in enumerate(["Acme", "Bravo", "Charlie", "Delta", "Echo"]):
+        group = str(100 + i)
+        rows.append((group, "15/06/2025", "Expense", "", vendor, "Purchase", "Supplies", "200.00", ""))
+        rows.append((group, "15/06/2025", "Expense", "", vendor, "Purchase", "Bank", "", "200.00"))
+    _write_journal(j, "2025", rows)
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+
+    findings = run_tax(store, eng)
+    qm = _find(findings, "quick_method_pattern_detected")
+    assert qm is not None
+    assert qm.severity == SEVERITY_INFO
+    assert "quick method" in qm.title.lower()
+
+
+def test_quick_method_not_detected_when_most_vendors_have_tax(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """If vendors are charging tax, the Quick Method pattern should NOT fire."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+
+    rows = []
+    for i, vendor in enumerate(["Acme", "Bravo", "Charlie", "Delta", "Echo"]):
+        group = str(100 + i)
+        rows.append((group, "15/06/2025", "Expense", "", vendor, "Purchase", "Supplies", "200.00", ""))
+        rows.append((group, "15/06/2025", "Expense", "", vendor, "Purchase", "GST/HST Payable", "26.00", ""))
+        rows.append((group, "15/06/2025", "Expense", "", vendor, "Purchase", "Bank", "", "226.00"))
+    _write_journal(j, "2025", rows)
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+
+    findings = run_tax(store, eng)
+    assert _find(findings, "quick_method_pattern_detected") is None
+
+
+def test_vendor_invoice_verification_always_fires(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """Every engagement with material vendors gets a 'verify sample invoice' finding."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2025", [
+        ("1", "15/06/2025", "Expense", "", "BigVendor", "Purchase", "Supplies", "5000.00", ""),
+        ("1", "15/06/2025", "Expense", "", "BigVendor", "Purchase", "GST/HST Payable", "650.00", ""),
+        ("1", "15/06/2025", "Expense", "", "BigVendor", "Purchase", "Bank", "", "5650.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+
+    findings = run_tax(store, eng)
+    v = _find(findings, "vendor_invoice_verification")
+    assert v is not None
+    assert v.severity == SEVERITY_INFO
+    assert "BigVendor" in v.detail
+    assert "invoice" in v.proposed_fix.lower()
+
+
 def test_rate_outlier_flagged(store: EngagementStore, tmp_path: Path) -> None:
     eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
     j = tmp_path / "j.csv"

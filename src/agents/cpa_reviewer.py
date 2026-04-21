@@ -193,6 +193,19 @@ _LLM_SYSTEM_PROMPT = """You are a senior Canadian CPA reviewing a bookkeeper's c
 - **Zero-rated supplies** (basic groceries, prescription drugs, exports): 0% tax.
 - **Exempt supplies** (most insurance, residential rent, most financial services, most educational services): no tax charged, no ITC claimable.
 
+# Quick Method of GST/HST Accounting (CRA)
+
+The **Quick Method** is a CRA election available to small businesses with annual
+taxable sales ≤ $400,000. Under Quick Method:
+
+- The business still charges regular GST/HST/QST on its sales (invoice amounts are unchanged).
+- On the return, it remits a **reduced rate** on taxable sales — approximately 3.6% for services in HST provinces (ON / NB / NS / NL / PE), 1.8% for services outside HST provinces, and different rates for goods-sellers.
+- It does **not** claim ITCs on ordinary operating expenses. The reduced remittance rate effectively bakes the ITCs in.
+- It **may** still claim ITCs on capital purchases over $10,000 (vehicles, computers, equipment), zero-rated inputs, and some specified expenses.
+- A plus 1% credit applies on the first $30,000 of eligible sales each fiscal year.
+
+**Audit implication:** a business on Quick Method will show 0% implied tax rate across nearly all vendor bills. That is **correct**, not an error. When the deterministic agents flag a "Quick Method pattern detected" finding, confirm with the client whether they're actually registered for the election before treating 0% rates as errors or as missing ITCs.
+
 # QuickBooks Online specifics (do NOT misdiagnose)
 
 - **QBO tracks GST and QST via tax codes inside the Tax Center, not via separate GL accounts.** A correctly configured Quebec QBO file typically has ONE consolidated "GST/HST Payable" (or "Sales Tax Payable") account. Do NOT tell the bookkeeper to create a separate QST account in the chart of accounts. If Quebec activity is detected, the check is: is the Tax Center set up with both GST and QST registered, and are the correct tax codes being applied to Quebec purchases?

@@ -126,8 +126,10 @@ def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
     findings.extend(_tax_account_inventory(report))
     findings.extend(_net_tax_position(report, bs_doc))
     vendor_stats = _compute_vendor_stats(report)
+    quick_method = _detect_quick_method_pattern(vendor_stats)
     findings.extend(_top_vendors(vendor_stats))
-    findings.extend(_rate_outliers(vendor_stats))
+    findings.extend(_vendor_invoice_verification(vendor_stats, quick_method))
+    findings.extend(_rate_outliers(vendor_stats, quick_method))
 
     log.info(
         "tax_auditor.done engagement=%s findings=%d error=%d warn=%d",
@@ -313,16 +315,25 @@ def _top_vendors(vendors: list[_VendorStats], n: int = 10) -> list[Finding]:
     )]
 
 
-def _rate_outliers(vendors: list[_VendorStats]) -> list[Finding]:
-    """Vendors whose implied rate doesn't match any standard Canadian bucket."""
+def _rate_outliers(
+    vendors: list[_VendorStats], quick_method_suspected: bool
+) -> list[Finding]:
+    """Vendors whose implied rate doesn't match any standard Canadian bucket.
+
+    Quick-Method-aware: when the business looks like it's using the Quick Method
+    of GST/HST Accounting (no ITCs claimed on ordinary purchases), 0% rates are
+    expected and correct — we don't flag them. Only truly non-standard rates
+    (stuck between brackets, mixed tax codes) get flagged as review items.
+    """
     material = [v for v in vendors if v.spend >= _MIN_VENDOR_SPEND]
     if not material:
         return []
 
     outliers: list[_VendorStats] = []
     for v in material:
-        if not _matches_any_standard_rate(v.implied_rate):
-            outliers.append(v)
+        if _matches_any_standard_rate(v.implied_rate):
+            continue
+        outliers.append(v)
 
     if not outliers:
         return [Finding(
@@ -344,11 +355,115 @@ def _rate_outliers(vendors: list[_VendorStats]) -> list[Finding]:
         proposed_fix=(
             "Common causes:\n"
             "• Rate 5% where 14.975% expected → QST missing on Quebec purchase\n"
-            "• Rate 0% on taxable purchase → tax not captured (no ITC claimed)\n"
-            "• Rate between brackets → partial tax, refund, or coding split\n"
-            "Spot-check one recent bill per vendor."
+            "• Rate between brackets → partial tax, refund, or mixed coding\n"
+            "Please verify one recent invoice per flagged vendor to confirm the "
+            "coding matches the actual tax charged."
         ),
     )]
+
+
+def _detect_quick_method_pattern(vendors: list[_VendorStats]) -> bool:
+    """Return True when the vendor tax profile looks like Quick Method accounting.
+
+    Quick Method (CRA) lets eligible businesses (annual taxable sales ≤ $400K)
+    remit a reduced rate on sales instead of tracking ITCs on ordinary purchases.
+    Signature: nearly all material vendors show 0% implied tax rate because no
+    ITCs are claimed. We call it "suspected" — the CPA still needs to confirm
+    the client is actually registered for the election.
+    """
+    material = [v for v in vendors if v.spend >= _MIN_VENDOR_SPEND]
+    if len(material) < 3:
+        return False  # too few material vendors to tell
+    zero_rate_count = sum(1 for v in material if v.implied_rate == _ZERO)
+    # 80%+ of material vendors at 0% is a strong signal.
+    return zero_rate_count / len(material) >= Decimal("0.8") if material else False
+
+
+def _vendor_invoice_verification(
+    vendors: list[_VendorStats], quick_method_suspected: bool
+) -> list[Finding]:
+    """Per-vendor verification request + Quick Method context.
+
+    Emits two findings:
+
+    1. **Quick Method context** (if the pattern matches) — tells the CPA to
+       confirm the Quick Method election before treating 0% rates as correct.
+       Without confirmation, 0% across all vendors could also mean ITCs are
+       being systematically missed — the same signature, very different outcome.
+    2. **Sample invoice list** — a single finding listing the top 10 material
+       vendors, asking the bookkeeper to obtain one recent invoice per vendor
+       so the tax coding can be spot-checked against the actual document.
+    """
+    material = [v for v in vendors if v.spend >= _MIN_VENDOR_SPEND]
+    if not material:
+        return []
+
+    findings: list[Finding] = []
+
+    if quick_method_suspected:
+        total_spend = sum((v.spend for v in material), _ZERO)
+        total_tax = sum((v.tax for v in material if v.tax > _ZERO), _ZERO)
+        findings.append(Finding(
+            agent=AGENT, check="quick_method_pattern_detected",
+            severity=SEVERITY_INFO,
+            title="Pattern suggests Quick Method of GST/HST Accounting — please confirm",
+            detail=(
+                f"Across {len(material)} material vendors (spend ≥ "
+                f"${_MIN_VENDOR_SPEND:,.0f}), total ITCs recorded are "
+                f"${total_tax:,.2f} on ${total_spend:,.2f} of spend. Nearly every "
+                f"vendor shows a 0% implied tax rate.\n\n"
+                "This signature is consistent with the **Quick Method of GST/HST "
+                "Accounting** (CRA election for businesses with taxable sales ≤ "
+                "$400K/yr). Under Quick Method:\n"
+                "• The business charges regular GST/HST/QST on sales as normal.\n"
+                "• It remits a **reduced rate** on those sales (e.g. 3.6% for "
+                "most services in ON/NB/NS/NL/PE; 1.8% for services outside HST "
+                "provinces) instead of the full rate.\n"
+                "• It does **not** claim ITCs on ordinary operating expenses — so "
+                "0% on most vendor bills is correct.\n"
+                "• It **can** still claim ITCs on capital purchases > $10,000 "
+                "(computers, vehicles, equipment) and on certain zero-rated purchases.\n"
+            ),
+            proposed_fix=(
+                "Confirm with the client: is the business registered for the "
+                "Quick Method election?\n"
+                "• **Yes** → 0% on ordinary purchases is correct. Review any "
+                "capital purchase > $10,000 to make sure an ITC was claimed.\n"
+                "• **No** → ITCs are being systematically missed. Every vendor "
+                "invoice should have the tax portion captured; re-process the "
+                "period and file an amended return if material."
+            ),
+        ))
+
+    # Per-vendor invoice verification request (one consolidated finding).
+    sample = material[:10]
+    header_hint = (
+        "0% is expected under Quick Method — use these checks to confirm the coding "
+        "matches the actual invoices."
+        if quick_method_suspected else
+        "Any vendor with 0% but material spend is a candidate for a missed ITC; any "
+        "non-standard rate is a candidate for a coding error."
+    )
+    lines = [
+        f"• **{v.name[:40]}** — spend ${v.spend:,.2f} over {v.line_count} lines, "
+        f"implied rate {v.implied_rate:.2f}%"
+        for v in sample
+    ]
+    findings.append(Finding(
+        agent=AGENT, check="vendor_invoice_verification",
+        severity=SEVERITY_INFO,
+        title=f"Please verify one sample invoice per top-{len(sample)} vendor",
+        detail=header_hint + "\n\n" + "\n".join(lines),
+        proposed_fix=(
+            "For each vendor above, please obtain **one recent invoice** (any month "
+            "within the period) and confirm the tax amount charged on the invoice "
+            "matches what was recorded in QBO. Attach the invoices to the working "
+            "papers. If you spot a mismatch, flag the vendor for a full-period "
+            "review — the pattern usually repeats across all that vendor's transactions."
+        ),
+    ))
+
+    return findings
 
 
 # ---- helpers ------------------------------------------------------------------
