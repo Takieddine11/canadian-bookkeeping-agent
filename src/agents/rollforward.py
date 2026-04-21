@@ -253,19 +253,24 @@ def _inventory_vs_cogs(
     ]
     if not inventory_lines:
         return [Finding(
-            agent=AGENT, check="inventory_missing", severity=SEVERITY_ERROR,
-            title=f"COGS of ${total_cogs:,.2f} with no Inventory account on the BS",
+            agent=AGENT, check="inventory_missing", severity=SEVERITY_WARN,
+            title=(
+                f"COGS of ${total_cogs:,.2f} recorded with no Inventory account on the BS "
+                "— please confirm closing count with the client"
+            ),
             detail=(
                 f"P&L shows Cost of Goods Sold ${total_cogs:,.2f}. Without an Inventory "
-                f"asset account, the closing count isn't captured and the period's "
-                f"COGS can't be reconciled to actual goods used."
+                f"asset account, there's no closing count captured for the period. This "
+                f"may be correct (e.g., a service business, or materials fully consumed "
+                f"within the period) — but when materials are on hand at period-end, COGS "
+                f"is overstated."
             ),
             proposed_fix=(
-                "Get the physical closing-inventory count from the client as of "
-                f"{bs.as_of.isoformat() if bs.as_of else 'period-end'}. Create an "
-                "Inventory asset account on the BS. Book the opening balance (prior "
-                "year-end count) and post a closing adjustment to true up COGS: "
-                "DR Inventory / CR COGS for unused materials still on hand."
+                "Please ask the client whether any materials/inventory were on hand at "
+                f"{bs.as_of.isoformat() if bs.as_of else 'period-end'}. If yes: (1) add "
+                "an Inventory asset to the BS, (2) post a closing adjustment DR Inventory "
+                "/ CR COGS for the value on hand. If no: confirm and document that this "
+                "is a service business or that all materials were consumed in the period."
             ),
         )]
 

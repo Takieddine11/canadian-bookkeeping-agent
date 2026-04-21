@@ -107,12 +107,14 @@ def test_inventory_lists_tax_accounts(store: EngagementStore, tmp_path: Path) ->
     assert "GST/HST Payable" in inv.detail
 
 
-def test_quebec_activity_missing_qst_flagged(
+def test_quebec_activity_flagged_as_info_not_error(
     store: EngagementStore, tmp_path: Path
 ) -> None:
+    """QBO tracks GST+QST via tax codes, not separate accounts. A Quebec file with
+    one consolidated GST/HST Payable account is correct — we surface Quebec activity
+    as INFO so the CPA can verify the Tax Center config, not as an error."""
     eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
     j = tmp_path / "j.csv"
-    # Vendor charged 14.975% → Quebec combined; no QST account in chart.
     _write_journal(j, "2025", [
         ("1", "15/06/2025", "Expense", "", "QC Vendor", "Purchase", "Supplies", "1000.00", ""),
         ("1", "15/06/2025", "Expense", "", "QC Vendor", "Purchase", "GST/HST Payable", "149.75", ""),
@@ -120,23 +122,11 @@ def test_quebec_activity_missing_qst_flagged(
     ])
     store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
     findings = run_tax(store, eng)
-    qst = _find(findings, "qst_account_missing")
-    assert qst is not None and qst.severity == SEVERITY_ERROR
-
-
-def test_quebec_activity_with_qst_account_not_flagged(
-    store: EngagementStore, tmp_path: Path
-) -> None:
-    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
-    j = tmp_path / "j.csv"
-    _write_journal(j, "2025", [
-        ("1", "15/06/2025", "Expense", "", "QC Vendor", "Purchase", "Supplies", "1000.00", ""),
-        ("1", "15/06/2025", "Expense", "", "QC Vendor", "Purchase", "GST Payable", "50.00", ""),
-        ("1", "15/06/2025", "Expense", "", "QC Vendor", "Purchase", "QST Payable", "99.75", ""),
-        ("1", "15/06/2025", "Expense", "", "QC Vendor", "Purchase", "Bank", "", "1149.75"),
-    ])
-    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
-    findings = run_tax(store, eng)
+    qc = _find(findings, "quebec_activity_detected")
+    assert qc is not None
+    assert qc.severity == SEVERITY_INFO
+    assert "tax center" in qc.proposed_fix.lower()
+    # No error should fire about a missing QST account under the new rule.
     assert _find(findings, "qst_account_missing") is None
 
 

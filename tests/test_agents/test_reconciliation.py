@@ -154,7 +154,8 @@ def test_monthly_breakdown_info(store: EngagementStore, tmp_path: Path) -> None:
     assert "2025-02" in m.detail
 
 
-def test_interac_deposit_sales_flagged_as_error(store: EngagementStore, tmp_path: Path) -> None:
+def test_interac_deposit_sales_flagged_as_warn(store: EngagementStore, tmp_path: Path) -> None:
+    """Interac-to-Sales is a docs check, not an error — coding may be correct."""
     eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
     path = tmp_path / "j.csv"
     _write_journal(path, "January-December 2025", [
@@ -165,11 +166,11 @@ def test_interac_deposit_sales_flagged_as_error(store: EngagementStore, tmp_path
     findings = run_recon(store, eng)
     sales = _find(findings, "interac_deposits_sales")
     assert sales is not None
-    assert sales.severity == SEVERITY_ERROR
-    assert "receipt" in sales.proposed_fix.lower()
+    assert sales.severity == SEVERITY_WARN
+    assert "receipt" in sales.proposed_fix.lower() or "confirm" in sales.proposed_fix.lower()
 
 
-def test_interac_deposit_shareholder_flagged_as_error(store: EngagementStore, tmp_path: Path) -> None:
+def test_interac_deposit_shareholder_flagged_as_warn(store: EngagementStore, tmp_path: Path) -> None:
     eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
     path = tmp_path / "j.csv"
     _write_journal(path, "January-December 2025", [
@@ -180,8 +181,30 @@ def test_interac_deposit_shareholder_flagged_as_error(store: EngagementStore, tm
     findings = run_recon(store, eng)
     sh = _find(findings, "interac_deposits_shareholder")
     assert sh is not None
-    assert sh.severity == SEVERITY_ERROR
-    assert "confirmation" in sh.proposed_fix.lower()
+    assert sh.severity == SEVERITY_WARN
+    assert "confirm" in sh.proposed_fix.lower()
+
+
+def test_interac_deposit_bank_side_is_excluded(store: EngagementStore, tmp_path: Path) -> None:
+    """Interac bank-side lines (DR to asset account) are NOT flagged — they're
+    bank-ops, not classification problems. Only the revenue/equity side counts."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    path = tmp_path / "j.csv"
+    # Plain bank-to-bank transfer described as Interac, with no revenue line.
+    _write_journal(path, "January-December 2025", [
+        ("1", "09/06/2025", "Expense", "", "", "Service Charge INTERAC E-TRANSFER FEE",
+         "Scotia Tax Account (1018)", "", "1.00"),
+        ("1", "09/06/2025", "Expense", "", "", "Service Charge INTERAC E-TRANSFER FEE",
+         "Finance Cost:Bank Charges", "1.00", ""),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, path)
+    findings = run_recon(store, eng)
+    # No Interac findings beyond the "all clear" OK — bank-side fee should not trigger.
+    assert _find(findings, "interac_deposits_sales") is None
+    assert _find(findings, "interac_deposits_shareholder") is None
+    assert _find(findings, "interac_deposits_other") is None
+    clear = _find(findings, "interac_deposits")
+    assert clear is not None and clear.severity == SEVERITY_OK
 
 
 def test_no_interac_deposits_is_ok(store: EngagementStore, tmp_path: Path) -> None:

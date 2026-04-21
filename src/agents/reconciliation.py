@@ -207,23 +207,50 @@ def _out_of_period(report: JournalReport, period_label: str | None) -> list[Find
 _INTERAC_RE = re.compile(r"(interac|e[- ]?transfer)", re.IGNORECASE)
 _SALES_ACCOUNT_TOKENS = ("sales", "revenue", "income")
 _SHAREHOLDER_ACCOUNT_TOKENS = ("shareholder",)
+# Accounts that are bank operations — Interac activity here is bank-side
+# movement (service charges, debit memos, bank-to-bank transfers), NOT a
+# classification problem the bookkeeper should be prompted to review.
+_BANK_CASH_TAX_TOKENS = (
+    "bank", "checking", "savings", "cash", "undeposited",
+    "scotia", "rbc", "td canada", "td bank", "bmo", "cibc",
+    "national bank", "desjardins", "laurentian",
+    "gst", "hst", "qst", "tvq", "pst", "tps",
+    "credit card",
+)
+
+
+def _is_bank_cash_or_tax(account: str) -> bool:
+    a = account.lower()
+    return any(tok in a for tok in _BANK_CASH_TAX_TOKENS)
 
 
 def _interac_deposits(report: JournalReport) -> list[Finding]:
-    """Every Interac transfer recorded as a deposit needs supporting documentation.
+    """Interac transfers recorded as deposits need supporting documentation.
 
-    Shareholder-advance coding requires written confirmation from the owner (without it,
-    CRA may reclassify as unreported income). Sales coding requires the underlying receipt
-    or invoice. This is where real QBO files most commonly lose an audit trail.
+    Scope notes driven by real-world QBO use:
+
+    * We only look at ``txn_type == "Deposit"`` — Interac mentions on other
+      transaction types are usually bank service charges or transfers, not
+      classification problems.
+    * We filter out bank/cash/tax accounts from the "credit side" we look at.
+      The bank-side line of a deposit is a debit to an asset and isn't what
+      the bookkeeper needs to audit; we only want the revenue/equity line.
+    * Severity is **WARN** — this is a documentation check, not a hard
+      error. The coding may be correct; the bookkeeper just needs the
+      receipt (for sales) or the signed owner statement (for shareholder
+      advances) on file before the CPA signs off.
     """
     interac_lines = [
         l for l in report.lines
-        if _INTERAC_RE.search(l.description) and l.credit > _ZERO
+        if _INTERAC_RE.search(l.description)
+        and l.credit > _ZERO
+        and l.txn_type == "Deposit"
+        and not _is_bank_cash_or_tax(l.account)
     ]
     if not interac_lines:
         return [Finding(
             agent=AGENT, check="interac_deposits", severity=SEVERITY_OK,
-            title="No Interac deposits detected",
+            title="No Interac deposits needing documentation review",
         )]
 
     sales_lines: list[JournalLine] = []
@@ -238,45 +265,52 @@ def _interac_deposits(report: JournalReport) -> list[Finding]:
         else:
             other_lines.append(line)
 
-    def _sample(lines: list[JournalLine], limit: int = 5) -> str:
-        sample = [
-            f"• {l.txn_date.isoformat()}  ${l.credit:,.2f}  [{l.account}]  "
-            f"{l.description[:60] + ('…' if len(l.description) > 60 else '')}"
-            for l in lines[:limit]
-        ]
-        if len(lines) > limit:
-            sample.append(f"… and {len(lines) - limit} more")
-        return "\n".join(sample)
+    def _render(lines: list[JournalLine]) -> str:
+        """Show every line — no truncation. Each line includes the QBO entry # so
+        the bookkeeper can locate the transaction directly in QBO."""
+        out: list[str] = []
+        for l in lines:
+            entry_ref = f"#{l.entry_number}" if l.entry_number else "—"
+            desc = l.description[:80] + ("…" if len(l.description) > 80 else "")
+            out.append(
+                f"• {l.txn_date.isoformat()}  {entry_ref:>6}  "
+                f"${l.credit:,.2f}  [{l.account}]  {desc}"
+            )
+        return "\n".join(out)
 
     findings: list[Finding] = []
     if sales_lines:
         total = sum((l.credit for l in sales_lines), _ZERO)
         findings.append(Finding(
-            agent=AGENT, check="interac_deposits_sales", severity=SEVERITY_ERROR,
-            title=f"{len(sales_lines)} Interac deposits coded as Sales (${total:,.2f}) — receipts required",
-            detail=_sample(sales_lines),
+            agent=AGENT, check="interac_deposits_sales", severity=SEVERITY_WARN,
+            title=(
+                f"{len(sales_lines)} Interac deposits coded as Sales (${total:,.2f}) "
+                "— confirm a receipt/invoice is on file for each"
+            ),
+            detail=_render(sales_lines),
             proposed_fix=(
-                "Obtain the sales receipt or invoice behind every Interac transfer coded as "
-                "revenue. Without documented sales, CRA cannot verify revenue recognition and "
-                "the amount is at risk of reclassification. Attach each receipt to the "
-                "transaction in QBO before sign-off."
+                "Please confirm each Interac deposit coded to Sales has the underlying "
+                "receipt or invoice on file. CRA requires supporting documentation for "
+                "revenue recognition. If the receipts are attached in QBO or stored in "
+                "your working papers, this check is satisfied."
             ),
         ))
 
     if shareholder_lines:
         total = sum((l.credit for l in shareholder_lines), _ZERO)
         findings.append(Finding(
-            agent=AGENT, check="interac_deposits_shareholder", severity=SEVERITY_ERROR,
+            agent=AGENT, check="interac_deposits_shareholder", severity=SEVERITY_WARN,
             title=(
                 f"{len(shareholder_lines)} Interac deposits coded as Shareholder advances "
-                f"(${total:,.2f}) — owner confirmation required"
+                f"(${total:,.2f}) — confirm with the owner"
             ),
-            detail=_sample(shareholder_lines),
+            detail=_render(shareholder_lines),
             proposed_fix=(
-                "Each of these is currently treated as a shareholder loan (debt), not income. "
-                "Obtain written confirmation from the shareholder that each Interac transfer "
-                "is a personal advance to the company — otherwise CRA will reclassify as "
-                "unreported revenue in an audit. Keep the signed statements on file."
+                "Please ask the shareholder to confirm in writing that each Interac "
+                "transfer is a personal advance to the company (debt, not income). "
+                "Without written confirmation on file, CRA may reclassify as unreported "
+                "revenue during audit. A signed email or statement kept in the working "
+                "papers is sufficient."
             ),
         ))
 
@@ -285,11 +319,11 @@ def _interac_deposits(report: JournalReport) -> list[Finding]:
         findings.append(Finding(
             agent=AGENT, check="interac_deposits_other", severity=SEVERITY_WARN,
             title=f"{len(other_lines)} Interac deposits coded to other accounts (${total:,.2f})",
-            detail=_sample(other_lines),
+            detail=_render(other_lines),
             proposed_fix=(
-                "Confirm the correct classification of each. Interac deposits are almost "
-                "always either revenue or shareholder advances — deposits booked to other "
-                "accounts usually mean a miscoding."
+                "These deposits are coded to accounts that aren't typical revenue or "
+                "shareholder-advance accounts. Please review each and confirm the "
+                "classification is intentional. If correct, no action needed."
             ),
         ))
     return findings

@@ -143,14 +143,22 @@ def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
 
 
 def _tax_account_inventory(report: JournalReport) -> list[Finding]:
-    """Which tax accounts exist; warn if QST/PST expected but missing."""
-    accounts = {l.account for l in report.lines if l.account}
-    has_gst_hst = any(_matches(a, _GST_HST_TOKENS) for a in accounts)
-    has_qst = any(_matches(a, _QST_TOKENS) for a in accounts)
-    has_pst = any(_matches(a, _PST_TOKENS) for a in accounts)
+    """Inventory of tax accounts + Quebec-activity detection.
 
+    IMPORTANT — QBO reality check: QuickBooks Online tracks GST and QST via
+    *tax codes* inside the Tax Center, **not** via separate GL accounts. A
+    Quebec-registered QBO file typically has ONE consolidated tax-payable
+    account (often "GST/HST Payable" or "Sales Tax Payable"), with QBO
+    computing the federal-vs-provincial split internally from the applied
+    tax codes at filing time.
+
+    So we surface Quebec activity as INFO for the CPA to verify in the Tax
+    Center — we do NOT flag it as an error on the chart of accounts.
+    """
+    accounts = {l.account for l in report.lines if l.account}
     tax_accts = [a for a in accounts if _matches(a, _ALL_TAX_TOKENS)]
-    detail = "Tax accounts in use:\n" + "\n".join(f"• {a}" for a in sorted(tax_accts))
+    detail = "Tax accounts in use:\n" + "\n".join(f"• {a}" for a in sorted(tax_accts)) \
+        if tax_accts else "No tax-related accounts found in the journal."
 
     findings: list[Finding] = [Finding(
         agent=AGENT, check="tax_accounts_present",
@@ -159,23 +167,24 @@ def _tax_account_inventory(report: JournalReport) -> list[Finding]:
         detail=detail,
     )]
 
-    # Heuristic for "this is a Quebec client" — any vendor/description line
-    # with ~14.975% implied tax rate strongly suggests QST is being collected.
-    if _looks_like_quebec(report) and not has_qst:
+    if _looks_like_quebec(report):
         findings.append(Finding(
-            agent=AGENT, check="qst_account_missing",
-            severity=SEVERITY_ERROR,
-            title="QST/TVQ account missing — Quebec activity detected",
+            agent=AGENT, check="quebec_activity_detected",
+            severity=SEVERITY_INFO,
+            title="Quebec activity detected — verify GST+QST in QBO Tax Center",
             detail=(
-                "The journal shows vendors with tax rates around 14.975% (5% GST + "
-                "9.975% QST) but the chart of accounts has no QST/TVQ account. "
-                "Both portions are being booked into GST/HST Payable."
+                "The journal shows vendors with implied tax rates around 14.975% "
+                "(5% GST + 9.975% QST), indicating the client operates in Quebec. "
+                "QBO tracks GST and QST via tax codes inside the Tax Center, not "
+                "via separate GL accounts — a single consolidated 'GST/HST Payable' "
+                "account is expected and correct."
             ),
             proposed_fix=(
-                "Create separate 'QST Payable' (or 'TVQ à payer') account and "
-                "re-code the QST portion of Quebec purchases into it. The GST/HST "
-                "return and the QST return must reconcile to their own liability "
-                "accounts, not a combined total."
+                "Open the QBO Tax Center and confirm: (1) both GST and QST are "
+                "registered and active, (2) the QST registration number is on file, "
+                "(3) filing frequency is set for each, and (4) the correct tax codes "
+                "are being used on Quebec purchases (e.g., \"GST+QST\" / \"HST QC\"). "
+                "No chart-of-accounts restructuring is required."
             ),
         ))
 

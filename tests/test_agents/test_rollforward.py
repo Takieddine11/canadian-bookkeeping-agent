@@ -215,11 +215,12 @@ def test_missing_bs_produces_error(store: EngagementStore, tmp_path: Path) -> No
     assert missing.severity == SEVERITY_ERROR
 
 
-def test_cogs_without_inventory_is_error(store: EngagementStore, tmp_path: Path) -> None:
+def test_cogs_without_inventory_is_warn(store: EngagementStore, tmp_path: Path) -> None:
+    """COGS-without-inventory is a judgment call (could be a service business) —
+    surface as WARN asking the CPA to confirm, not as ERROR."""
     eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
     bs = tmp_path / "bs.xlsx"
     pl = tmp_path / "pnl.xlsx"
-    # BS: no inventory account. P&L: real COGS.
     _balance_sheet(bs, assets=100000, liab=20000, equity=80000, profit=10000, re=70000)
     _pnl(pl, income=200000, cogs=50000, expenses=140000, profit=10000)
     store.attach_document(eng.engagement_id, DOC_BALANCE_SHEET, bs)
@@ -227,7 +228,7 @@ def test_cogs_without_inventory_is_error(store: EngagementStore, tmp_path: Path)
     findings = run_rollforward(store, eng)
     inv = _find(findings, "inventory_missing")
     assert inv is not None
-    assert inv.severity == SEVERITY_ERROR
+    assert inv.severity == SEVERITY_WARN
     assert "closing" in inv.proposed_fix.lower()
 
 
