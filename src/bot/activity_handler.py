@@ -73,6 +73,8 @@ log = logging.getLogger(__name__)
 TEAMS_FILE_DOWNLOAD_INFO = "application/vnd.microsoft.teams.file.download.info"
 _TRIGGER_RE = re.compile(r"^\s*new\s+audit\s+(.+?)\s*$", re.IGNORECASE)
 _CLEANUP_TRIGGER_RE = re.compile(r"^\s*new\s+cleanup\s+(.+?)\s*$", re.IGNORECASE)
+# Matches `new audit` / `new cleanup` with NO period — so we can prompt for one.
+_BARE_TRIGGER_RE = re.compile(r"^\s*new\s+(audit|cleanup)\s*$", re.IGNORECASE)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 _CARDS_DIR = Path(__file__).parent / "cards"
@@ -126,6 +128,19 @@ class AuditBot(TeamsActivityHandler):
             turn_context.activity.conversation.id,
             self._conversation_type(turn_context),
         )
+
+        # Bare `new audit` / `new cleanup` with no period — prompt for one.
+        bare = _BARE_TRIGGER_RE.match(text) if text else None
+        if bare:
+            mode_name = bare.group(1).lower()
+            await turn_context.send_activity(MessageFactory.text(
+                f"I need a period to start `{mode_name}`. Examples:\n\n"
+                f"- `new {mode_name} Q3 2026`\n"
+                f"- `new {mode_name} 2025`\n"
+                f"- `new {mode_name} FY2026` or `new {mode_name} Jan-Mar 2026`\n\n"
+                "Please resend with the period."
+            ))
+            return
 
         # `new cleanup <period>` — start the cleanup coach flow
         cleanup_match = _CLEANUP_TRIGGER_RE.match(text) if text else None
