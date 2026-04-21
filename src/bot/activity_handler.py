@@ -136,6 +136,22 @@ class AuditBot(TeamsActivityHandler):
         # `new audit <period>` — start the (existing) audit flow
         match = _TRIGGER_RE.match(text) if text else None
         if match:
+            # If an active cleanup engagement exists, auto-complete it first so the
+            # bookkeeper doesn't have to type `done` explicitly. Common flow: they
+            # worked through the SOP, then typed `new audit <period>` to move on.
+            conversation_id = turn_context.activity.conversation.id
+            existing = self.store.get_active_engagement(conversation_id)
+            if existing is not None and existing.mode == MODE_CLEANUP:
+                self.store.update_phase(existing.engagement_id, PHASE_DELIVERED)
+                await turn_context.send_activity(MessageFactory.text(
+                    f"✅ Cleanup engagement `{existing.engagement_id}` closed "
+                    f"(stopped at step {existing.cleanup_step_index + 1} / "
+                    f"{len(agent_cleanup_coach.STEPS)}). Starting audit now."
+                ))
+                log.info(
+                    "cleanup.auto_closed_on_audit_trigger engagement=%s at_step=%d",
+                    existing.engagement_id, existing.cleanup_step_index,
+                )
             await self._start_engagement(turn_context, period=match.group(1))
             if attachments:
                 await self._handle_uploads(turn_context, attachments)

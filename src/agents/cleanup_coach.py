@@ -210,6 +210,7 @@ BACK_COMMANDS = frozenset({"back", "previous", "prev"})
 REPEAT_COMMANDS = frozenset({"repeat", "show", "current"})
 STATUS_COMMANDS = frozenset({"status", "progress", "where"})
 SKIP_COMMANDS = frozenset({"skip", "n/a", "not applicable"})
+FINISH_COMMANDS = frozenset({"finish", "close", "end", "stop", "exit"})
 
 
 @dataclass(frozen=True)
@@ -248,8 +249,27 @@ def handle_command(
     the engagement out of cleanup (mode → audit, phase → intake) when step 8 is
     completed.
     """
-    command = text.strip().lower()
+    # Strip trailing tokens like engagement IDs so "finish bcbe221d0991" still matches.
+    first_word = text.strip().lower().split(maxsplit=1)[0] if text.strip() else ""
+    command = first_word if first_word in FINISH_COMMANDS else text.strip().lower()
     idx = engagement.cleanup_step_index
+
+    if command in FINISH_COMMANDS:
+        # Explicit close — whatever step they're on, wrap up and hand off to audit.
+        store.set_mode(engagement.engagement_id, MODE_AUDIT)
+        store.update_phase(engagement.engagement_id, PHASE_DELIVERED)
+        log.info(
+            "cleanup.closed_early engagement=%s at_step=%d",
+            engagement.engagement_id, idx,
+        )
+        return CoachResponse(
+            f"✅ Cleanup engagement closed (stopped at step {idx + 1} / {len(STEPS)}).\n\n"
+            f"When you're ready to audit, type:\n\n"
+            f"    new audit {engagement.period_description or '<period>'}\n\n"
+            "then drop Journal / BS / P&L and type `ready`.",
+            idx,
+            cleanup_complete=True,
+        )
 
     if command in REPEAT_COMMANDS or command == "":
         return CoachResponse(render_step(STEPS[idx]), idx)
