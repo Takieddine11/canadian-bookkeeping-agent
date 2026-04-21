@@ -164,33 +164,16 @@ def test_rate_outlier_flagged(store: EngagementStore, tmp_path: Path) -> None:
     assert "Odd Vendor" in out.detail
 
 
-def test_net_tax_vs_bs_ties(store: EngagementStore, tmp_path: Path) -> None:
+def test_net_tax_position_is_informational(store: EngagementStore, tmp_path: Path) -> None:
+    """Journal tax movement is surfaced as INFO, not compared to BS.
+
+    Journal activity mixes current-period accruals with prior-period return
+    payments, so a direct comparison to BS Payable creates false alarms.
+    """
     eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
     j = tmp_path / "j.csv"
     bs = tmp_path / "bs.xlsx"
-    # Net tax = output 100 - input 70 = 30. BS Payable = 30 → ties.
-    _write_journal(j, "2025", [
-        ("1", "15/06/2025", "Expense", "", "V", "P", "Supplies", "700", ""),
-        ("1", "15/06/2025", "Expense", "", "V", "P", "GST/HST Payable", "70", ""),
-        ("1", "15/06/2025", "Expense", "", "V", "P", "Bank", "", "770"),
-        ("2", "15/07/2025", "Invoice", "", "C", "S", "A/R", "1100", ""),
-        ("2", "15/07/2025", "Invoice", "", "C", "S", "Sales", "", "1000"),
-        ("2", "15/07/2025", "Invoice", "", "C", "S", "GST/HST Payable", "", "100"),
-    ])
-    _write_bs(bs, gst_hst_payable=30.0)
-    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
-    store.attach_document(eng.engagement_id, DOC_BALANCE_SHEET, bs)
-
-    findings = run_tax(store, eng)
-    net = _find(findings, "net_tax_position")
-    assert net is not None and net.severity == SEVERITY_OK
-
-
-def test_net_tax_vs_bs_gap_warns(store: EngagementStore, tmp_path: Path) -> None:
-    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
-    j = tmp_path / "j.csv"
-    bs = tmp_path / "bs.xlsx"
-    # Journal net tax = 30, BS Payable = 500 → large gap.
+    # Regardless of the BS Payable value, severity stays INFO.
     _write_journal(j, "2025", [
         ("1", "15/06/2025", "Expense", "", "V", "P", "Supplies", "700", ""),
         ("1", "15/06/2025", "Expense", "", "V", "P", "GST/HST Payable", "70", ""),
@@ -205,4 +188,23 @@ def test_net_tax_vs_bs_gap_warns(store: EngagementStore, tmp_path: Path) -> None
 
     findings = run_tax(store, eng)
     net = _find(findings, "net_tax_position")
-    assert net is not None and net.severity == SEVERITY_WARN
+    assert net is not None
+    assert net.severity == SEVERITY_INFO
+    # The proposed-fix text must explain the timing nuance, not call it an error.
+    assert "prior" in net.proposed_fix.lower() or "rollforward" in net.proposed_fix.lower()
+
+
+def test_net_tax_position_works_without_bs(store: EngagementStore, tmp_path: Path) -> None:
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2025", [
+        ("1", "15/06/2025", "Expense", "", "V", "P", "Supplies", "700", ""),
+        ("1", "15/06/2025", "Expense", "", "V", "P", "GST/HST Payable", "70", ""),
+        ("1", "15/06/2025", "Expense", "", "V", "P", "Bank", "", "770"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+
+    findings = run_tax(store, eng)
+    net = _find(findings, "net_tax_position")
+    assert net is not None
+    assert net.severity == SEVERITY_INFO

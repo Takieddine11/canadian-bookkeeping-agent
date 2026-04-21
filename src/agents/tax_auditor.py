@@ -194,63 +194,62 @@ def _tax_account_inventory(report: JournalReport) -> list[Finding]:
 def _net_tax_position(
     report: JournalReport, bs_doc
 ) -> list[Finding]:
-    """Compare journal-derived net tax to Balance Sheet GST/HST Payable."""
-    input_tax = _ZERO   # tax paid to suppliers (debits to tax accounts)
-    output_tax = _ZERO  # tax collected from customers (credits to tax accounts)
+    """Surface journal-level tax movement for CPA review.
+
+    IMPORTANT — this check used to COMPARE the journal net to the BS Payable
+    and flag a WARNING on any gap. That was wrong: journal tax movement during
+    a fiscal year includes **prior-period return payments** (debits to the tax
+    account clearing last year's liability) plus **current-period accruals**
+    (credits from sales, debits from purchase ITCs). The BS Payable balance
+    is the cumulative net liability at period-end, not the sum of in-period
+    activity. For example, a business paying its 2023-24 return during 2025
+    has a big debit to the tax account that has nothing to do with 2025 net
+    tax owed.
+
+    The correct rollforward requires the **prior-period** BS balance, which we
+    don't capture yet. Until we do, this finding surfaces the period numbers
+    as INFO for the CPA to verify against filed returns — no comparison, no
+    false alarm.
+    """
+    input_tax = _ZERO   # debits to tax accounts (ITCs + prior-period payments mixed)
+    output_tax = _ZERO  # credits to tax accounts (tax collected + prior-period reversals)
     for line in report.lines:
         if _matches(line.account, _ALL_TAX_TOKENS):
             input_tax += line.debit
             output_tax += line.credit
     net = output_tax - input_tax
 
+    bs_line = ""
+    if bs_doc is not None:
+        try:
+            bs = parse_balance_sheet(Path(bs_doc.file_path))
+            bs_payable = bs.amount_of("GST/HST Payable")
+            if bs_payable is not None:
+                bs_line = f"\n• BS GST/HST Payable at period-end: ${bs_payable:,.2f}"
+        except Exception:
+            log.exception("tax_auditor.bs_parse_failed")
+
     detail = (
-        f"• Output tax (credits, collected): ${output_tax:,.2f}\n"
-        f"• Input tax (debits, ITC / refundable): ${input_tax:,.2f}\n"
-        f"• Net payable per journal: ${net:,.2f}"
+        f"Tax-account activity **during the period** (includes prior-period "
+        f"return payments clearing last year's balance):\n"
+        f"• Total credits (collected on sales + adjustments): ${output_tax:,.2f}\n"
+        f"• Total debits (ITCs + prior-period remittances): ${input_tax:,.2f}\n"
+        f"• Net journal movement: ${net:,.2f}"
+        + bs_line
     )
 
-    if bs_doc is None:
-        return [Finding(
-            agent=AGENT, check="net_tax_position", severity=SEVERITY_INFO,
-            title=f"Net sales-tax position per journal: ${net:,.2f}",
-            detail=detail,
-            proposed_fix="Upload the Balance Sheet so this can be tied to GST/HST Payable.",
-        )]
-
-    try:
-        bs = parse_balance_sheet(Path(bs_doc.file_path))
-    except Exception:
-        log.exception("tax_auditor.bs_parse_failed")
-        return [Finding(
-            agent=AGENT, check="net_tax_position", severity=SEVERITY_INFO,
-            title=f"Net sales-tax position per journal: ${net:,.2f}",
-            detail=detail,
-        )]
-
-    bs_payable = bs.amount_of("GST/HST Payable") or _ZERO
-    diff = net - (bs_payable * -1)  # BS Payable is a liability (negative in rollforward); invert
-    # Simpler: compare absolute magnitudes.
-    diff_simple = abs(abs(net) - abs(bs_payable))
-
-    tol = Decimal("1.00")
-    if diff_simple <= tol:
-        return [Finding(
-            agent=AGENT, check="net_tax_position", severity=SEVERITY_OK,
-            title=f"Journal tax ties to BS GST/HST Payable (${bs_payable:,.2f})",
-            detail=detail,
-        )]
-
     return [Finding(
-        agent=AGENT, check="net_tax_position", severity=SEVERITY_WARN,
-        title=f"Net tax per journal ${net:,.2f} vs BS Payable ${bs_payable:,.2f}",
-        detail=(
-            detail
-            + f"\n• Gap: ${diff_simple:,.2f}"
-        ),
+        agent=AGENT, check="net_tax_position", severity=SEVERITY_INFO,
+        title="Sales-tax movement during the period — CPA to reconcile against filed returns",
+        detail=detail,
         proposed_fix=(
-            "A difference usually means: (a) tax returns filed but not matched against "
-            "Payable, (b) prior-period opening balance, or (c) coding errors the tax "
-            "auditor will surface vendor-by-vendor."
+            "The journal net and the BS balance are NOT directly comparable — the "
+            "journal net mixes current-period accruals with prior-period payments made "
+            "during this period, while the BS balance is the cumulative liability at "
+            "period-end. To tie properly, the CPA needs: (1) prior-period closing "
+            "Payable balance, (2) returns filed during this period with amounts, "
+            "(3) current-period accrued tax. The rollforward is: "
+            "prior balance + current accrued − returns paid = current balance."
         ),
     )]
 
