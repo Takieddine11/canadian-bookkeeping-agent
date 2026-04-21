@@ -36,10 +36,22 @@ from typing import Iterable
 
 log = logging.getLogger(__name__)
 
-EXPECTED_COLUMNS = 9
 HEADER_SIGNATURE = ("", "Transaction date", "Transaction type", "#")
 TOTAL_PREFIX = "Total for "
 GRAND_TOTAL_LABEL = "TOTAL"
+
+# Column-name synonyms — different QBO export configs use different labels for
+# the same field. The parser looks up each column by trying these names in order.
+_COLUMN_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "date":    ("Transaction date",),
+    "type":    ("Transaction type",),
+    "num":     ("#", "Num"),
+    "name":    ("Name",),
+    "desc":    ("Description", "Memo"),
+    "account": ("Account full name", "Full name", "Split"),
+    "debit":   ("Debit",),
+    "credit":  ("Credit",),
+}
 
 # QBO exports from Excel are typically cp1252 on Canadian/French locales — try
 # UTF-8 first (covers modern exports + the BOM), fall back to cp1252.
@@ -135,35 +147,58 @@ def _read_csv_rows(path: Path) -> list[list[str]]:
     )
 
 
+@dataclass(frozen=True)
+class _ColumnMap:
+    """Position of each named column in the CSV, discovered from the header row.
+
+    Making the parser header-driven (rather than fixed-index) lets it handle QBO
+    export variants — e.g. the extra "Distribution account number" column that
+    some files include between "Description" and "Account full name".
+    """
+
+    date: int
+    type: int
+    num: int
+    name: int
+    desc: int
+    account: int
+    debit: int
+    credit: int
+    width: int   # pad rows to at least this many columns
+
+
 def parse_journal_rows(rows: list[list[str]]) -> JournalReport:
     if not rows:
         raise JournalParseError("empty file")
 
-    company, period, header_idx = _parse_preamble(rows)
+    company, period, header_idx, col = _parse_preamble(rows)
     lines: list[JournalLine] = []
     reported: dict[str, JournalGroupTotals] = {}
     current_group: str | None = None
 
     for row in rows[header_idx + 1:]:
-        row = _pad_row(row, EXPECTED_COLUMNS)
+        row = _pad_row(row, col.width)
         first_cell = (row[0] or "").strip()
         second_cell = (row[1] or "").strip()
 
         if not any(cell.strip() for cell in row):
             continue
 
-        # Grand-total row at end of report: ``,TOTAL,,,,,,,$...``
+        # Grand-total row at end of report.
         if first_cell == "" and second_cell == GRAND_TOTAL_LABEL:
             current_group = None
             continue
 
         if first_cell.startswith(TOTAL_PREFIX):
             gid = first_cell[len(TOTAL_PREFIX):].strip()
-            reported[gid] = JournalGroupTotals(
-                group_id=gid,
-                debit=_parse_amount(row[7]),
-                credit=_parse_amount(row[8]),
-            )
+            try:
+                reported[gid] = JournalGroupTotals(
+                    group_id=gid,
+                    debit=_parse_amount(row[col.debit]),
+                    credit=_parse_amount(row[col.credit]),
+                )
+            except ValueError as e:
+                log.warning("journal.bad_total_amount group=%s err=%s", gid, e)
             current_group = None
             continue
 
@@ -172,12 +207,12 @@ def parse_journal_rows(rows: list[list[str]]) -> JournalReport:
             current_group = first_cell
             continue
 
-        # Detail row: first cell empty, date in col 1.
+        # Detail row: first cell empty, date in the date column.
         if first_cell == "" and second_cell:
             if current_group is None:
                 log.warning("journal.detail_before_group row=%s", row)
                 continue
-            line = _build_line(current_group, row)
+            line = _build_line(current_group, row, col)
             if line is not None:
                 lines.append(line)
             continue
@@ -192,15 +227,20 @@ def parse_journal_rows(rows: list[list[str]]) -> JournalReport:
 # ---- helpers ------------------------------------------------------------------
 
 
-def _parse_preamble(rows: list[list[str]]) -> tuple[str, str, int]:
-    """Return (company, period, header_row_index). Raises if header not found in first 10 rows."""
+def _parse_preamble(rows: list[list[str]]) -> tuple[str, str, int, _ColumnMap]:
+    """Return (company, period, header_row_index, column_map).
+
+    Finds the header row by signature match on the first 4 cells, then builds a
+    ``_ColumnMap`` by looking up each expected logical column via ``_COLUMN_SYNONYMS``.
+    """
     company = ""
     period = ""
     for i, row in enumerate(rows[:15]):
-        padded = _pad_row(row, EXPECTED_COLUMNS)
-        first = (padded[0] or "").strip()
-        if tuple(padded[:4]) == HEADER_SIGNATURE:
-            return company, period, i
+        header_cells = [str(c).strip() if c is not None else "" for c in row]
+        if len(header_cells) >= 4 and tuple(header_cells[:4]) == HEADER_SIGNATURE:
+            return company, period, i, _build_column_map(header_cells)
+        # Row 0 = title ("Journal"); row 1 = company; row 2 = period.
+        first = header_cells[0] if header_cells else ""
         if i == 1 and first:
             company = first
         elif i == 2 and first:
@@ -211,29 +251,64 @@ def _parse_preamble(rows: list[list[str]]) -> tuple[str, str, int]:
     )
 
 
+def _build_column_map(header_cells: list[str]) -> _ColumnMap:
+    """Resolve each logical column to its position in this particular export."""
+    def find(logical: str) -> int:
+        synonyms = _COLUMN_SYNONYMS[logical]
+        for i, cell in enumerate(header_cells):
+            if cell in synonyms:
+                return i
+        raise JournalParseError(
+            f"Journal header is missing a column matching {logical!r} "
+            f"(tried {synonyms}); got header={header_cells!r}"
+        )
+
+    return _ColumnMap(
+        date=find("date"),
+        type=find("type"),
+        num=find("num"),
+        name=find("name"),
+        desc=find("desc"),
+        account=find("account"),
+        debit=find("debit"),
+        credit=find("credit"),
+        width=len(header_cells),
+    )
+
+
 def _pad_row(row: list[str], width: int) -> list[str]:
     if len(row) >= width:
         return row
     return list(row) + [""] * (width - len(row))
 
 
-def _build_line(group_id: str, row: list[str]) -> JournalLine | None:
+def _build_line(group_id: str, row: list[str], col: _ColumnMap) -> JournalLine | None:
     try:
-        txn_date = _parse_date(row[1])
+        txn_date = _parse_date(row[col.date])
     except ValueError as e:
-        log.warning("journal.bad_date group=%s value=%r err=%s", group_id, row[1], e)
+        log.warning("journal.bad_date group=%s value=%r err=%s", group_id, row[col.date], e)
+        return None
+
+    try:
+        debit = _parse_amount(row[col.debit])
+        credit = _parse_amount(row[col.credit])
+    except ValueError as e:
+        log.warning(
+            "journal.bad_amount group=%s debit=%r credit=%r err=%s",
+            group_id, row[col.debit], row[col.credit], e,
+        )
         return None
 
     return JournalLine(
         group_id=group_id,
-        entry_number=row[3].strip(),
+        entry_number=row[col.num].strip(),
         txn_date=txn_date,
-        txn_type=row[2].strip(),
-        name=row[4].strip(),
-        description=_clean_description(row[5]),
-        account=row[6].strip(),
-        debit=_parse_amount(row[7]),
-        credit=_parse_amount(row[8]),
+        txn_type=row[col.type].strip(),
+        name=row[col.name].strip(),
+        description=_clean_description(row[col.desc]),
+        account=row[col.account].strip(),
+        debit=debit,
+        credit=credit,
     )
 
 
