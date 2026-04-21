@@ -1,0 +1,38 @@
+{
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "Journal parsed ✓",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": true
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                { "title": "Company",        "value": "${company}" },
+                { "title": "Period",         "value": "${period}" },
+                { "title": "Date range",     "value": "${dateRange}" },
+                { "title": "Journal entries", "value": "${entries}" },
+                { "title": "Lines",          "value": "${lines}" },
+                { "title": "Accounts touched", "value": "${accounts}" },
+                { "title": "Trial balance",  "value": "${trialBalance}" }
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "Top accounts by line count",
+            "weight": "Bolder",
+            "spacing": "Medium",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "${topAccounts}",
+            "wrap": true
+        }
+    ]
+}

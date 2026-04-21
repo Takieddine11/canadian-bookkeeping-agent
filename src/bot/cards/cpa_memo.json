@@ -1,0 +1,88 @@
+{
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "CPA Review Memo — ${company}, ${period}",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "Engagement ${engagementId}",
+            "isSubtle": true,
+            "spacing": "None",
+            "wrap": true
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                { "title": "Total checks",       "value": "${totalChecks}" },
+                { "title": "Errors (blocking)",  "value": "${nErrors}" },
+                { "title": "Warnings (review)",  "value": "${nWarnings}" },
+                { "title": "Info",               "value": "${nInfo}" },
+                { "title": "OK",                 "value": "${nOk}" }
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "${executiveSummary}",
+            "wrap": true,
+            "spacing": "Medium",
+            "color": "${summaryColor}"
+        },
+        {
+            "type": "TextBlock",
+            "text": "**Action required before sign-off**",
+            "wrap": true,
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": "${actionsMarkdown}",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "**Recommended review**",
+            "wrap": true,
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": "${warningsMarkdown}",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "**Context**",
+            "wrap": true,
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": "${contextMarkdown}",
+            "wrap": true
+        }
+    ],
+    "actions": [
+        {
+            "type": "Action.Submit",
+            "title": "Approve for sign-off",
+            "style": "positive",
+            "data": { "verb": "cpa_approve", "engagementId": "${engagementId}" }
+        },
+        {
+            "type": "Action.Submit",
+            "title": "Request changes",
+            "style": "destructive",
+            "data": { "verb": "cpa_request_changes", "engagementId": "${engagementId}" }
+        }
+    ]
+}

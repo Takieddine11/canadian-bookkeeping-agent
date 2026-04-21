@@ -1,0 +1,32 @@
+# Secrets & credentials
+.env
+.env.local
+credentials.json
+token.json
+*.pem
+*.key
+
+# Intermediate / regenerable
+.tmp/
+*.log
+
+# Built Teams manifest bundle (regenerate from teams-manifest/)
+AuditBot-Teams.zip
+ziD1afr8
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

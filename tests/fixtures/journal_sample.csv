@@ -1,0 +1,22 @@
+Journal,,,,,,,,
+Test Client Inc.,,,,,,,,
+"January-March, 2026",,,,,,,,
+
+,Transaction date,Transaction type,#,Name,Description,Full name,Debit,Credit
+324,,,,,,,,
+,01/01/2026,Journal Entry,23,,Jan Rent,Building Rent,330.00,
+,01/01/2026,Journal Entry,23,,Jan Rent,Loans to Shareholders,,330.00
+Total for 324,,,,,,,$330.00,$330.00
+132,,,,,,,,
+,30/01/2026,Journal Entry,1,,"DEP Other, 1/20, Cash from Shareholder / Loan",Loans to Shareholders,,25.00
+,30/01/2026,Journal Entry,1,,"FREE INTERAC E-TRANSFER, 1/21",Sales,,"1,000.00"
+,30/01/2026,Journal Entry,1,,"PAIEMENT FACTURE BM
+ REVENU QUEBEC, 1/23",GST/HST Payable,"1,010.00",
+,30/01/2026,Journal Entry,1,,"SERVICE CHARGE, 1/31",Finance Cost:Bank Charges,15.00,
+Total for 132,,,,,,,"$1,025.00","$1,025.00"
+473,,,,,,,,
+,10/02/2026,Expense,,RONA,,Loans to Shareholders,,50.55
+,10/02/2026,Expense,,RONA,Rona,Construction Supplies & Materials,43.97,
+,10/02/2026,Expense,,RONA,,GST/HST Payable,2.20,
+,10/02/2026,Expense,,RONA,,GST/HST Payable,4.38,
+Total for 473,,,,,,,$50.55,$50.55

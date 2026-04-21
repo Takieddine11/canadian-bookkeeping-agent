@@ -1,0 +1,33 @@
+{
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "Intake progress",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "${presentList}",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "${missingPrompt}",
+            "wrap": true,
+            "spacing": "Medium",
+            "color": "${missingColor}"
+        },
+        {
+            "type": "TextBlock",
+            "text": "Type **ready** (or *done*, *go*, *analyze*) when you've uploaded everything you're going to — I'll start the audit.",
+            "wrap": true,
+            "spacing": "Medium",
+            "isSubtle": true
+        }
+    ]
+}

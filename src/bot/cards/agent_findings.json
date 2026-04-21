@@ -1,0 +1,27 @@
+{
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "${agentTitle}",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "${summaryLine}",
+            "wrap": true,
+            "isSubtle": true,
+            "spacing": "None"
+        },
+        {
+            "type": "TextBlock",
+            "text": "${findingsMarkdown}",
+            "wrap": true,
+            "spacing": "Medium"
+        }
+    ]
+}

@@ -1,0 +1,90 @@
+{
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "CPA Reviewer (LLM synthesis — Opus 4.7)",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "Engagement ${engagementId}  ·  ${company}  ·  ${period}",
+            "isSubtle": true,
+            "spacing": "None",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "${executiveSummary}",
+            "wrap": true,
+            "spacing": "Medium",
+            "color": "${summaryColor}"
+        },
+        {
+            "type": "TextBlock",
+            "text": "**Blocking issues**",
+            "wrap": true,
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": "${blockingMarkdown}",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "**Judgment calls for the CPA**",
+            "wrap": true,
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": "${judgmentMarkdown}",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "**Proposed adjusting journal entries**",
+            "wrap": true,
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": "${adjustmentsMarkdown}",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "**Questions for the client**",
+            "wrap": true,
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": "${questionsMarkdown}",
+            "wrap": true
+        }
+    ],
+    "actions": [
+        {
+            "type": "Action.Submit",
+            "title": "Approve for sign-off",
+            "style": "positive",
+            "data": { "verb": "cpa_approve", "engagementId": "${engagementId}" }
+        },
+        {
+            "type": "Action.Submit",
+            "title": "Request changes",
+            "style": "destructive",
+            "data": { "verb": "cpa_request_changes", "engagementId": "${engagementId}" }
+        }
+    ]
+}

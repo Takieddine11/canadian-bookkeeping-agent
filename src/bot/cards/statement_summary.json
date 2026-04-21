@@ -1,0 +1,43 @@
+{
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "${reportTitle} parsed ✓",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": true
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                { "title": "Company",    "value": "${company}" },
+                { "title": "Period",     "value": "${period}" },
+                { "title": "As of",      "value": "${asOf}" },
+                { "title": "Basis",      "value": "${basis}" },
+                { "title": "Line items", "value": "${lines}" }
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "Key figures",
+            "weight": "Bolder",
+            "spacing": "Medium",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "${keyFigures}",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "${integrityCheck}",
+            "wrap": true,
+            "spacing": "Medium",
+            "color": "${integrityColor}"
+        }
+    ]
+}

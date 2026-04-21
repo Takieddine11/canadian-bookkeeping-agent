@@ -1,0 +1,43 @@
+{
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "New audit started: ${periodDescription}",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "Engagement ID: ${engagementId}",
+            "isSubtle": true,
+            "spacing": "None",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "Drag-and-drop the four documents below into this chat (or use the paperclip icon). I'll confirm each one as it arrives.",
+            "wrap": true,
+            "spacing": "Medium"
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                { "title": "1. Journal Report", "value": "Full GL / detail report for the period" },
+                { "title": "2. Balance Sheet", "value": "As of period-end, with prior-period comparative" },
+                { "title": "3. Profit & Loss", "value": "For the period, with prior-period comparative" },
+                { "title": "4. Bank Statements", "value": "All bank + credit card accounts, full period" }
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "Accepted formats: PDF, XLSX, CSV. Mark scanned (image-only) statements when you upload — OCR is slower and less accurate.",
+            "isSubtle": true,
+            "wrap": true,
+            "spacing": "Medium"
+        }
+    ]
+}

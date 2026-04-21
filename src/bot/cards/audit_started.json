@@ -1,0 +1,45 @@
+{
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "Starting audit — engagement ${engagementId}",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": true
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                { "title": "Company",        "value": "${company}" },
+                { "title": "Period",         "value": "${period}" },
+                { "title": "Documents",      "value": "${docList}" },
+                { "title": "Journal entries", "value": "${journalEntries}" },
+                { "title": "Total activity", "value": "${journalTotal}" },
+                { "title": "BS balanced",    "value": "${bsBalanced}" },
+                { "title": "P&L profit",     "value": "${pnlProfit}" }
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "Running analyses next:",
+            "weight": "Bolder",
+            "spacing": "Medium",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "• Reconciliation (descriptions vs accounts, duplicates, bank matching)\n• Rollforward (trial balance, retained earnings, BS identity)\n• Sales-tax audit (GST/HST/QST/PST coding)\n• CPA review (final memo)",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "I'll post results as each agent finishes. This may take a few minutes.",
+            "wrap": true,
+            "spacing": "Medium",
+            "isSubtle": true
+        }
+    ]
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "cfd2b8f3-54ce-4a68-85e4-a8122e26a4ad",
+  "developer": {
+    "name": "N.Z.A Inc.",
+    "websiteUrl": "https://zentax.pro",
+    "privacyUrl": "https://zentax.pro/privacy",
+    "termsOfUseUrl": "https://zentax.pro/terms"
+  },
+  "name": {
+    "short": "AuditBot",
+    "full": "AuditBot — Bookkeeping Audit Assistant"
+  },
+  "description": {
+    "short": "Start and manage bookkeeping audits in Teams channels.",
+    "full": "AuditBot helps your team run bookkeeping audits directly in Microsoft Teams. Mention @AuditBot new audit <period> to start an engagement, then drop financial documents (Journal, Balance Sheet, P&L, Bank Statements) into the channel for automated processing."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#4F6D7A",
+  "bots": [
+    {
+      "botId": "cfd2b8f3-54ce-4a68-85e4-a8122e26a4ad",
+      "scopes": ["team", "personal"],
+      "supportsFiles": true,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["team"],
+          "commands": [
+            {
+              "title": "new audit",
+              "description": "Start a new audit engagement. Usage: new audit Q3 2026"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}
