@@ -256,7 +256,8 @@ def _tax_refund_direction_audit(report: JournalReport) -> list[Finding]:
     correction_impact = wrong_credit_total * 2  # flipping a credit to debit swings by 2x
 
     detail_lines = [
-        f"• {l.txn_date.isoformat()}  ${l.credit:,.2f}  [{l.account}]  "
+        f"• {l.txn_date.isoformat()}  deposit ${l.credit:,.2f}  "
+        f"posted to [{l.account}] as a CREDIT  — "
         f"{l.description[:90] + ('…' if len(l.description) > 90 else '')}"
         for l in suspicious
     ]
@@ -264,18 +265,33 @@ def _tax_refund_direction_audit(report: JournalReport) -> list[Finding]:
     return [Finding(
         agent=AGENT, check="tax_refund_direction", severity=SEVERITY_ERROR,
         title=(
-            f"{len(suspicious)} tax-account credit(s) describing government activity "
-            f"(${wrong_credit_total:,.2f}) — likely a direction-flip error; "
-            f"correction impact ~${correction_impact:,.2f}"
+            f"{len(suspicious)} government refund deposit(s) booked backwards — "
+            f"tax liability is OVERSTATED by ~${correction_impact:,.2f}"
         ),
-        detail="\n".join(detail_lines),
+        detail=(
+            "These are deposits FROM the government (Revenu Québec / CRA) — "
+            "they're **reimbursements**, money coming INTO the business.\n\n"
+            "Reimbursements from the government should **REDUCE** the tax liability, "
+            "so the tax-account line of each deposit should be a **DEBIT**. Here they "
+            "were posted as **CREDITS**, which makes the liability BIGGER instead of "
+            "smaller — the opposite of what happened economically.\n\n"
+            "Transactions flagged:\n"
+            + "\n".join(detail_lines)
+            + f"\n\n**Net effect:** the tax liability is overstated by "
+              f"~${correction_impact:,.2f} "
+              f"(2× the {len(suspicious)}-line credit total of "
+              f"${wrong_credit_total:,.2f} — flipping each line to a debit swings "
+              "the balance by 2× the amount)."
+        ),
         proposed_fix=(
-            "Government refunds received and remittances paid should DEBIT the tax "
-            "liability account (reducing the balance), not CREDIT it (increasing). "
-            "For each flagged transaction, open it in QBO and flip the tax-account "
-            "line from credit to debit. Verify each amount against the Notice of "
-            f"Assessment / Revenu Québec statement first. Expected combined balance "
-            f"reduction after all corrections: ${correction_impact:,.2f}."
+            "In QBO, open each deposit transaction and change the tax-account line "
+            "from CREDIT to DEBIT. This makes the deposit behave as a refund that "
+            "reduces the liability, which is what actually happened. Before making "
+            "the change, quickly confirm each amount against the Revenu Québec / "
+            "CRA statement (My Business Account → Statement of Account) so you're "
+            "sure these are genuine refunds and not something else. Expected result "
+            f"after both corrections: the tax Payable/Suspense balance drops by "
+            f"${correction_impact:,.2f}."
         ),
     )]
 
