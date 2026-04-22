@@ -12,7 +12,7 @@
         },
         {
             "type": "TextBlock",
-            "text": "Tell me about this client once — it makes the audit drop false positives and skip redundant questions. Skip if you want; the audit still runs, it'll just ask for the missing pieces.",
+            "text": "${prefillNote}",
             "wrap": true,
             "isSubtle": true,
             "spacing": "None"
@@ -21,19 +21,22 @@
             "type": "Input.Text",
             "id": "legal_name",
             "label": "Legal entity name",
-            "placeholder": "e.g. Cleany Québec Inc."
+            "placeholder": "e.g. Cleany Québec Inc.",
+            "value": "${legal_name}"
         },
         {
             "type": "Input.Text",
             "id": "industry",
             "label": "Industry / what the business does",
-            "placeholder": "e.g. cleaning services, IT consulting, retail, construction"
+            "placeholder": "e.g. cleaning services, IT consulting, retail, construction",
+            "value": "${industry}"
         },
         {
             "type": "Input.ChoiceSet",
             "id": "province",
             "label": "Primary province of operation",
             "placeholder": "Select province",
+            "value": "${province}",
             "choices": [
                 { "title": "Quebec (QC)", "value": "QC" },
                 { "title": "Ontario (ON)", "value": "ON" },
@@ -52,13 +55,15 @@
             "type": "Input.Text",
             "id": "fiscal_year_end",
             "label": "Fiscal year end (MM-DD)",
-            "placeholder": "e.g. 12-31"
+            "placeholder": "e.g. 12-31",
+            "value": "${fiscal_year_end}"
         },
         {
             "type": "Input.ChoiceSet",
             "id": "gst_hst_registered",
             "label": "Registered for GST/HST?",
             "style": "compact",
+            "value": "${gst_hst_registered}",
             "choices": [
                 { "title": "Yes", "value": "yes" },
                 { "title": "No (below $30K threshold)", "value": "no" },
@@ -70,6 +75,7 @@
             "id": "qst_registered",
             "label": "Registered for QST (Quebec)?",
             "style": "compact",
+            "value": "${qst_registered}",
             "choices": [
                 { "title": "Yes", "value": "yes" },
                 { "title": "No / not applicable", "value": "no" },
@@ -81,6 +87,7 @@
             "id": "pst_registered",
             "label": "Registered for PST (BC / MB / SK)?",
             "style": "compact",
+            "value": "${pst_registered}",
             "choices": [
                 { "title": "Yes", "value": "yes" },
                 { "title": "No / not applicable", "value": "no" },
@@ -92,6 +99,7 @@
             "id": "quick_method_elected",
             "label": "Quick Method of GST/HST election?",
             "style": "compact",
+            "value": "${quick_method_elected}",
             "choices": [
                 { "title": "Yes, elected (remits reduced rate, no ITCs on ordinary expenses)", "value": "yes" },
                 { "title": "No, regular method", "value": "no" },
@@ -103,6 +111,7 @@
             "id": "has_inventory",
             "label": "Does the business carry inventory?",
             "style": "compact",
+            "value": "${has_inventory}",
             "choices": [
                 { "title": "Yes — materials or products on hand at year-end", "value": "yes" },
                 { "title": "No — pure service business, all consumed in-period", "value": "no" },
@@ -114,6 +123,7 @@
             "id": "has_payroll",
             "label": "Does the business run payroll (T4 employees)?",
             "style": "compact",
+            "value": "${has_payroll}",
             "choices": [
                 { "title": "Yes", "value": "yes" },
                 { "title": "No — dividends or subcontractors only", "value": "no" }
@@ -124,6 +134,7 @@
             "id": "prior_year_filed",
             "label": "Prior year T2 / personal tax return filed?",
             "style": "compact",
+            "value": "${prior_year_filed}",
             "choices": [
                 { "title": "Yes, filed and assessed", "value": "yes" },
                 { "title": "No / still outstanding", "value": "no" },
@@ -135,7 +146,8 @@
             "id": "notes",
             "label": "Anything else the auditor should know? (optional)",
             "placeholder": "e.g. SR&ED claim pending, new owner this year, loan with bank covenants",
-            "isMultiline": true
+            "isMultiline": true,
+            "value": "${notes}"
         }
     ],
     "actions": [

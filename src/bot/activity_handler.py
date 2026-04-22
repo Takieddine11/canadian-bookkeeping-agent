@@ -299,15 +299,9 @@ class AuditBot(TeamsActivityHandler):
         await turn_context.send_activity(
             MessageFactory.attachment(CardFactory.adaptive_card(card))
         )
-        # Also post the client-profile form. Filling it is optional; if skipped, the
-        # audit still runs and the LLM will ask for the missing facts as usual.
-        profile_card = _substitute(
-            json.loads(CLIENT_PROFILE_CARD_PATH.read_text(encoding="utf-8")),
-            {"engagementId": engagement.engagement_id},
-        )
-        await turn_context.send_activity(
-            MessageFactory.attachment(CardFactory.adaptive_card(profile_card))
-        )
+        # Profile form is NOT posted here anymore — we post it after all core
+        # docs arrive, pre-filled from the files so the bookkeeper only confirms
+        # or fills the gaps. Much faster for monthly bookkeeping cycles.
 
     # ---- uploads ----------------------------------------------------------
 
@@ -422,6 +416,24 @@ class AuditBot(TeamsActivityHandler):
         await turn_context.send_activity(
             MessageFactory.attachment(CardFactory.adaptive_card(card))
         )
+
+        # Post the client profile form ONCE, the first time all core docs are in.
+        # Pre-fill fields inferred from the uploaded files so the bookkeeper only
+        # confirms or corrects them rather than typing from scratch.
+        should_post_profile = (
+            status.has_all_core
+            and engagement.client_profile_json is None  # not yet prompted or saved
+        )
+        if should_post_profile:
+            inferred = self._infer_profile_from_docs(engagement)
+            profile_card = self._render_profile_form(engagement, inferred)
+            await turn_context.send_activity(
+                MessageFactory.attachment(CardFactory.adaptive_card(profile_card))
+            )
+            log.info(
+                "client_profile.form_posted engagement=%s inferred_fields=%s",
+                engagement.engagement_id, sorted(inferred.keys()),
+            )
 
     async def _start_audit(self, turn_context: TurnContext, engagement: Engagement) -> None:
         """Advance from intake to audit phases and post the audit-started card."""
@@ -578,10 +590,15 @@ class AuditBot(TeamsActivityHandler):
             return
 
         if verb == "skip_client_profile":
+            # Mark as prompted (empty profile) so we don't re-post the form on
+            # subsequent doc uploads to the same engagement.
+            if engagement_id:
+                self.store.set_client_profile(engagement_id, json.dumps({}))
+                log.info("client_profile.skipped engagement=%s", engagement_id)
             await turn_context.send_activity(
                 MessageFactory.text(
                     "Skipped — proceeding without a profile. The audit will ask for "
-                    "any facts it needs. Drop your Journal / BS / P&L and type `ready`."
+                    "any facts it needs. Type `ready` when you're set."
                 )
             )
             return
@@ -691,6 +708,149 @@ class AuditBot(TeamsActivityHandler):
             engagement.engagement_id, memo.n_errors, memo.n_warnings,
             memo.sign_off_ready,
         )
+
+    _PROFILE_FIELDS: tuple[str, ...] = (
+        "legal_name", "industry", "province", "fiscal_year_end",
+        "gst_hst_registered", "qst_registered", "pst_registered",
+        "quick_method_elected", "has_inventory", "has_payroll",
+        "prior_year_filed", "notes",
+    )
+
+    def _render_profile_form(
+        self, engagement: Engagement, inferred: dict[str, str]
+    ) -> dict[str, Any]:
+        """Render the profile card with inferred defaults substituted in each field."""
+        n_prefilled = sum(1 for f in self._PROFILE_FIELDS if inferred.get(f))
+        if n_prefilled:
+            prefill_note = (
+                f"Pre-filled {n_prefilled} field(s) from your uploaded files — "
+                "please confirm or correct and fill any gaps, then Save. "
+                "Skip to proceed without (slower for monthly cycles)."
+            )
+        else:
+            prefill_note = (
+                "Tell me about this client once — it makes the audit drop false "
+                "positives and skip redundant questions. Skip if you want; the "
+                "audit still runs, it'll just ask for the missing pieces."
+            )
+        values = {"engagementId": engagement.engagement_id, "prefillNote": prefill_note}
+        for field in self._PROFILE_FIELDS:
+            values[field] = inferred.get(field, "")
+        return _substitute(
+            json.loads(CLIENT_PROFILE_CARD_PATH.read_text(encoding="utf-8")),
+            values,
+        )
+
+    def _infer_profile_from_docs(self, engagement: Engagement) -> dict[str, str]:
+        """Parse BS + P&L + Journal to pre-fill client-profile fields.
+
+        Saves the bookkeeper from retyping what the files already contain — name,
+        fiscal year end, inventory presence, payroll, Quebec tax activity, Quick
+        Method signature. Returns a dict with only the fields we could infer; the
+        bookkeeper confirms or corrects them in the profile form.
+
+        This is best-effort. Silent on parse failures. Returns `{}` if nothing
+        could be inferred.
+        """
+        profile: dict[str, str] = {}
+        eid = engagement.engagement_id
+
+        # --- P&L: legal name ---
+        pnl_doc = self.store.latest_document(eid, DOC_PNL)
+        if pnl_doc is not None:
+            try:
+                pnl = parse_pnl(Path(pnl_doc.file_path))
+                if pnl.company:
+                    profile["legal_name"] = pnl.company
+            except Exception:
+                pass
+
+        # --- Balance Sheet: legal name (fallback), fiscal year end, inventory flag ---
+        bs_doc = self.store.latest_document(eid, DOC_BALANCE_SHEET)
+        if bs_doc is not None:
+            try:
+                bs = parse_balance_sheet(Path(bs_doc.file_path))
+                if "legal_name" not in profile and bs.company:
+                    profile["legal_name"] = bs.company
+                if bs.as_of:
+                    profile["fiscal_year_end"] = bs.as_of.strftime("%m-%d")
+                # Inventory presence
+                inventory_present = any(
+                    any(tok in l.name.lower() for tok in
+                        ("inventory", "stock on hand", "merchandise", "work in progress"))
+                    and l.amount is not None
+                    for l in bs.lines
+                )
+                if inventory_present:
+                    profile["has_inventory"] = "yes"
+            except Exception:
+                pass
+
+        # --- Journal: province, Quick Method, payroll, GST/HST registration ---
+        journal_doc = self.store.latest_document(eid, DOC_JOURNAL)
+        if journal_doc is not None:
+            try:
+                jr = parse_journal_csv(Path(journal_doc.file_path))
+                lines = jr.lines
+
+                # Payroll accounts → has_payroll
+                payroll_keys = ("wages", "salaries", "salary", "payroll", "cpp", " ei ", "cpp/ei")
+                if any(any(k in l.account.lower() for k in payroll_keys) for l in lines):
+                    profile["has_payroll"] = "yes"
+
+                # GST/HST account activity with credits → registered for GST/HST
+                tax_lines = [
+                    l for l in lines
+                    if any(k in l.account.lower() for k in ("gst", "hst", "qst", "tvq", "tps"))
+                ]
+                if any(l.credit > _ZERO for l in tax_lines):
+                    profile["gst_hst_registered"] = "yes"
+
+                # QST registration: QST account or 14.975% vendor pattern
+                qst_account_present = any(
+                    any(k in l.account.lower() for k in ("qst", "tvq"))
+                    for l in tax_lines
+                )
+                if qst_account_present:
+                    profile["qst_registered"] = "yes"
+
+                # Province + Quick Method from vendor tax-rate pattern
+                from src.agents.tax_auditor import (
+                    _compute_vendor_stats, _detect_quick_method_pattern,
+                )
+                vendors = _compute_vendor_stats(jr)
+                if _detect_quick_method_pattern(vendors):
+                    profile["quick_method_elected"] = "yes"
+
+                # Province: rate clustering
+                material = [v for v in vendors if v.spend >= Decimal("100") and v.tax > _ZERO]
+                if material:
+                    tol = Decimal("0.3")
+                    bucket_counts: dict[str, int] = {}
+                    for v in material:
+                        r = v.implied_rate
+                        if abs(r - Decimal("14.975")) <= tol:
+                            bucket = "QC"
+                        elif abs(r - Decimal("13")) <= tol:
+                            bucket = "ON"
+                        elif abs(r - Decimal("15")) <= tol:
+                            bucket = "ATL"
+                        elif abs(r - Decimal("5")) <= tol:
+                            bucket = "GST_ONLY"
+                        else:
+                            bucket = "OTHER"
+                        bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
+                    if bucket_counts:
+                        top_bucket = max(bucket_counts, key=bucket_counts.get)
+                        if top_bucket == "QC":
+                            profile["province"] = "QC"
+                            profile.setdefault("qst_registered", "yes")
+                        elif top_bucket == "ON":
+                            profile["province"] = "ON"
+            except Exception:
+                pass
+
+        return profile
 
     def _infer_company(self, engagement: Engagement) -> str | None:
         """Best-effort lookup: parse the latest BS/P&L/journal title rows, if present."""
