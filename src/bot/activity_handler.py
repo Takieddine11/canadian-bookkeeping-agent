@@ -870,6 +870,7 @@ class AuditBot(TeamsActivityHandler):
         return None
 
     def _bs_highlights(self, engagement: Engagement) -> dict[str, str]:
+        from src.parsers import labels as L
         doc = self.store.latest_document(engagement.engagement_id, DOC_BALANCE_SHEET)
         if doc is None:
             return {}
@@ -878,15 +879,22 @@ class AuditBot(TeamsActivityHandler):
         except Exception:
             return {}
         out: dict[str, str] = {}
-        for name in ("Total Assets", "Total Liabilities", "Total Equity",
-                     "Retained Earnings", "Profit for the year",
-                     "GST/HST Payable", "GST/HST Suspense"):
-            amt = bs.amount_of(name)
+        checks: list[tuple[str, tuple[str, ...]]] = [
+            ("Total Assets",                    L.TOTAL_ASSETS),
+            ("Total Liabilities",               L.TOTAL_LIABILITIES),
+            ("Total Equity",                    L.TOTAL_EQUITY),
+            ("Retained Earnings",               L.RETAINED_EARNINGS),
+            ("Profit for the year",             L.PROFIT_FOR_THE_YEAR),
+            ("GST/HST Payable",                 L.GST_HST_PAYABLE),
+        ]
+        for label, names in checks:
+            amt = bs.amount_of_any(*names)
             if amt is not None:
-                out[name] = f"${amt:,.2f}"
+                out[label] = f"${amt:,.2f}"
         return out
 
     def _pnl_highlights(self, engagement: Engagement) -> dict[str, str]:
+        from src.parsers import labels as L
         doc = self.store.latest_document(engagement.engagement_id, DOC_PNL)
         if doc is None:
             return {}
@@ -895,11 +903,17 @@ class AuditBot(TeamsActivityHandler):
         except Exception:
             return {}
         out: dict[str, str] = {}
-        for name in ("Total Income", "Total Cost of Goods Sold",
-                     "GROSS PROFIT", "Total Expenses", "PROFIT"):
-            amt = pl.amount_of(name)
+        checks: list[tuple[str, tuple[str, ...]]] = [
+            ("Total Income",              L.TOTAL_INCOME),
+            ("Total Cost of Goods Sold",  L.TOTAL_COGS),
+            ("GROSS PROFIT",              L.GROSS_PROFIT),
+            ("Total Expenses",            L.TOTAL_EXPENSES),
+            ("PROFIT",                    L.NET_PROFIT),
+        ]
+        for label, names in checks:
+            amt = pl.amount_of_any(*names)
             if amt is not None:
-                out[name] = f"${amt:,.2f}"
+                out[label] = f"${amt:,.2f}"
         return out
 
     # Role badges for the memo card. A visually distinct tag per responsible
@@ -993,8 +1007,9 @@ class AuditBot(TeamsActivityHandler):
             bs = parse_balance_sheet(Path(doc.file_path))
         except Exception:
             return "(parse failed)"
-        ta = bs.amount_of("Total Assets") or _ZERO
-        tle = bs.amount_of("Total Liabilities and Equity") or _ZERO
+        from src.parsers import labels as L
+        ta = bs.amount_of_any(*L.TOTAL_ASSETS) or _ZERO
+        tle = bs.amount_of_any(*L.TOTAL_LIABILITIES_AND_EQUITY) or _ZERO
         identity = "✓" if ta == tle else f"⚠ ${ta:,.2f} vs ${tle:,.2f}"
         basis = f" ({bs.basis})" if bs.basis else ""
         return f"Total Assets ${ta:,.2f}, identity {identity}{basis}"
@@ -1007,8 +1022,9 @@ class AuditBot(TeamsActivityHandler):
             pl = parse_pnl(Path(doc.file_path))
         except Exception:
             return "(parse failed)"
-        income = pl.amount_of("Total Income") or _ZERO
-        profit = pl.amount_of("PROFIT")
+        from src.parsers import labels as L
+        income = pl.amount_of_any(*L.TOTAL_INCOME) or _ZERO
+        profit = pl.amount_of_any(*L.NET_PROFIT)
         if profit is None:
             return f"Income ${income:,.2f}"
         margin = (profit / income * 100) if income > _ZERO else _ZERO
@@ -1280,14 +1296,42 @@ class AuditBot(TeamsActivityHandler):
 
 
 def _classify_doc_type(filename: str | None) -> str:
+    """Classify a QBO export by filename. Accepts English + French names;
+    many Canadian clients (esp. Quebec) use French QBO labels."""
     name = (filename or "").lower()
-    if any(k in name for k in ("journal", "gl", "general_ledger", "general ledger")):
+    if any(k in name for k in (
+        # English
+        "journal", "gl", "general_ledger", "general ledger",
+        # French — "Journal" is the same; "Grand livre" is the ledger
+        "grand livre", "grand_livre", "grand-livre",
+    )):
         return DOC_JOURNAL
-    if any(k in name for k in ("balance", "bs_", " bs.", "_bs.", "balancesheet")):
+    if any(k in name for k in (
+        # English
+        "balance", "bs_", " bs.", "_bs.", "balancesheet",
+        # French — "Bilan" is the common name; the long form is
+        # "État de (la) situation financière"
+        "bilan",
+        "situation financière", "situation financiere",
+        "état de situation", "etat de situation",
+    )):
         return DOC_BALANCE_SHEET
-    if any(k in name for k in ("p&l", "pnl", "p_l", "profit", "income_statement", "income statement")):
+    if any(k in name for k in (
+        # English
+        "p&l", "pnl", "p_l", "profit", "income_statement", "income statement",
+        # French — "État des résultats" / "Résultat" / "Pertes et profits"
+        "résultat", "resultat", "résultats", "resultats",
+        "état des résultats", "etat des resultats",
+        "état du résultat", "etat du resultat",
+        "profits et pertes", "pertes et profits",
+    )):
         return DOC_PNL
-    if any(k in name for k in ("bank", "statement", "credit_card", "creditcard", " cc ", "_cc_")):
+    if any(k in name for k in (
+        # English
+        "bank", "statement", "credit_card", "creditcard", " cc ", "_cc_",
+        # French — "Relevé bancaire"
+        "relevé", "releve", "relevé bancaire", "releve bancaire",
+    )):
         return DOC_BANK_STATEMENT
     return "unknown"
 

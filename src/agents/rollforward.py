@@ -32,6 +32,7 @@ from src.agents.base import (
     SEVERITY_WARN,
     Finding,
 )
+from src.parsers import labels as L
 from src.parsers.financial_statement import (
     REPORT_BALANCE_SHEET,
     FinancialStatement,
@@ -121,8 +122,8 @@ def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
 
 
 def _accounting_identity(bs: FinancialStatement) -> list[Finding]:
-    total_assets = bs.amount_of("Total Assets") or _ZERO
-    total_le = bs.amount_of("Total Liabilities and Equity") or _ZERO
+    total_assets = bs.amount_of_any(*L.TOTAL_ASSETS) or _ZERO
+    total_le = bs.amount_of_any(*L.TOTAL_LIABILITIES_AND_EQUITY) or _ZERO
     diff = total_assets - total_le
     if abs(diff) <= _IDENTITY_TOLERANCE:
         return [Finding(
@@ -143,8 +144,8 @@ def _accounting_identity(bs: FinancialStatement) -> list[Finding]:
 
 
 def _profit_tie(bs: FinancialStatement, pnl: FinancialStatement) -> list[Finding]:
-    bs_profit = bs.amount_of("Profit for the year")
-    pl_profit = pnl.amount_of("PROFIT") or pnl.amount_of("Net Income")
+    bs_profit = bs.amount_of_any(*L.PROFIT_FOR_THE_YEAR)
+    pl_profit = pnl.amount_of_any(*L.NET_PROFIT)
     if bs_profit is None or pl_profit is None:
         return [Finding(
             agent=AGENT, check="profit_tie", severity=SEVERITY_WARN,
@@ -173,10 +174,14 @@ def _profit_tie(bs: FinancialStatement, pnl: FinancialStatement) -> list[Finding
 def _retained_earnings_snapshot(
     bs: FinancialStatement, pnl: FinancialStatement
 ) -> list[Finding]:
-    re = bs.amount_of("Retained Earnings") or _ZERO
-    profit = bs.amount_of("Profit for the year") or pnl.amount_of("PROFIT") or _ZERO
-    dividends = bs.amount_of("Dividends")
-    total_equity = bs.amount_of("Total Equity") or _ZERO
+    re = bs.amount_of_any(*L.RETAINED_EARNINGS) or _ZERO
+    profit = (
+        bs.amount_of_any(*L.PROFIT_FOR_THE_YEAR)
+        or pnl.amount_of_any(*L.NET_PROFIT)
+        or _ZERO
+    )
+    dividends = bs.amount_of_any(*L.DIVIDENDS)
+    total_equity = bs.amount_of_any(*L.TOTAL_EQUITY) or _ZERO
 
     parts = [f"Retained Earnings ${re:,.2f}", f"Profit ${profit:,.2f}"]
     if dividends is not None:
@@ -226,8 +231,13 @@ def _bank_balances(bs: FinancialStatement) -> list[Finding]:
     )]
 
 
-_INVENTORY_TOKENS = ("inventory", "stock on hand", "merchandise", "work in progress", "wip")
-_COGS_ROLLUP_NAMES = ("Total Cost of Goods Sold", "COST OF GOODS SOLD", "Cost of Goods Sold")
+_INVENTORY_TOKENS = (
+    # English
+    "inventory", "stock on hand", "merchandise", "work in progress", "wip",
+    # French
+    "stock", "stocks", "inventaire", "marchandises",
+    "travaux en cours",
+)
 
 
 def _inventory_vs_cogs(
@@ -240,12 +250,7 @@ def _inventory_vs_cogs(
     inventory asset on the BS, the equation can't close and the period's COGS is
     effectively an estimate.
     """
-    total_cogs: Decimal | None = None
-    for name in _COGS_ROLLUP_NAMES:
-        amt = pnl.amount_of(name)
-        if amt is not None:
-            total_cogs = amt
-            break
+    total_cogs = pnl.amount_of_any(*L.TOTAL_COGS)
     if total_cogs is None or total_cogs == _ZERO:
         return []  # no COGS → no inventory check needed
 
@@ -299,8 +304,13 @@ def _inventory_vs_cogs(
 
 
 def _gst_hst_balance(bs: FinancialStatement) -> list[Finding]:
-    payable = bs.amount_of("GST/HST Payable")
-    suspense = bs.amount_of("GST/HST Suspense")
+    payable = bs.amount_of_any(*L.GST_HST_PAYABLE)
+    # Suspense is usually qualified (e.g. "GST/HST Suspense", "TPS/TVH en suspens")
+    suspense = (
+        bs.amount_of("GST/HST Suspense")
+        or bs.amount_of("TPS/TVH en suspens")
+        or bs.amount_of("Taxes en suspens")
+    )
     if payable is None and suspense is None:
         return []
 

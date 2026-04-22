@@ -167,6 +167,48 @@ def test_wrong_wrapper_raises(bs_file: Path, pnl_file: Path) -> None:
         parse_balance_sheet(pnl_file)
 
 
+def test_french_balance_sheet_title_recognized(tmp_path: Path) -> None:
+    """FR QBO exports title the balance sheet as 'Bilan' or 'État de situation financière'."""
+    path = tmp_path / "bilan.xlsx"
+    _write_xlsx(path, [
+        ("Company Inc.",),
+        ("Bilan",),
+        ("Au 31 décembre, 2025",),
+        (None,),
+        (None, "Total"),
+        ("Actif",),
+        ("Total de l'actif", 100.0),
+        ("Passif et capitaux propres",),
+        ("Total du passif et des capitaux propres", 100.0),
+        ("Mardi, 21 avr. 2026 - Base de caisse",),
+    ])
+    fs = parse_financial_statement(path)
+    assert fs.report_type == REPORT_BALANCE_SHEET
+    # amount_of_any should pick up FR labels.
+    from src.parsers import labels as L
+    assert fs.amount_of_any(*L.TOTAL_ASSETS) == Decimal("100")
+
+
+def test_french_pnl_title_recognized(tmp_path: Path) -> None:
+    path = tmp_path / "resultats.xlsx"
+    _write_xlsx(path, [
+        ("Company Inc.",),
+        ("État des résultats",),
+        ("Du 1 janvier au 31 décembre 2025",),
+        (None,),
+        (None, "Total"),
+        ("   REVENUS",),
+        ("      Ventes", 1000.0),
+        ("   Total des revenus", 1000.0),
+        ("BÉNÉFICE", 200.0),
+    ])
+    fs = parse_financial_statement(path)
+    assert fs.report_type == REPORT_PNL
+    from src.parsers import labels as L
+    assert fs.amount_of_any(*L.TOTAL_INCOME) == Decimal("1000")
+    assert fs.amount_of_any(*L.NET_PROFIT) == Decimal("200")
+
+
 def test_unknown_report_title_raises(tmp_path: Path) -> None:
     path = tmp_path / "weird.xlsx"
     _write_xlsx(path, [

@@ -327,8 +327,9 @@ def _net_tax_position(
     bs_line = ""
     if bs_doc is not None:
         try:
+            from src.parsers import labels as L
             bs = parse_balance_sheet(Path(bs_doc.file_path))
-            bs_payable = bs.amount_of("GST/HST Payable")
+            bs_payable = bs.amount_of_any(*L.GST_HST_PAYABLE)
             if bs_payable is not None:
                 bs_line = f"\n• BS GST/HST Payable at period-end: ${bs_payable:,.2f}"
         except Exception:

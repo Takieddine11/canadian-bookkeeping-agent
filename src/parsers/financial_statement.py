@@ -77,6 +77,18 @@ class FinancialStatement:
         line = self.find(name)
         return line.amount if line else None
 
+    def amount_of_any(self, *names: str) -> Decimal | None:
+        """Try each name in order; return the first matching line's amount.
+
+        Used to accept English-or-French labels without branching in every agent.
+        E.g. ``bs.amount_of_any("Total Assets", "Total de l'actif")``.
+        """
+        for n in names:
+            v = self.amount_of(n)
+            if v is not None:
+                return v
+        return None
+
 
 class StatementParseError(Exception):
     pass
@@ -276,10 +288,27 @@ def _first_str(rows: list[tuple], idx: int) -> str:
 
 
 def _classify_report(title: str) -> str:
+    """Detect Balance Sheet vs P&L from the title row. Accepts English and French
+    QBO labels — Quebec bookkeepers commonly export in French."""
     t = title.lower()
-    if "balance sheet" in t:
+    # --- Balance Sheet ---
+    bs_markers = (
+        "balance sheet",
+        "bilan",
+        "situation financière", "situation financiere",
+        "état de situation",  "etat de situation",
+    )
+    if any(m in t for m in bs_markers):
         return REPORT_BALANCE_SHEET
-    if "profit" in t and "loss" in t:
+    # --- P&L ---
+    pnl_markers = (
+        "profit and loss", "income statement",
+        "résultat", "resultat",
+        "état des résultats", "etat des resultats",
+        "état du résultat", "etat du resultat",
+        "profits et pertes", "pertes et profits",
+    )
+    if any(m in t for m in pnl_markers):
         return REPORT_PNL
     raise StatementParseError(f"Unknown report type in title: {title!r}")
 

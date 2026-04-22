@@ -36,21 +36,31 @@ from typing import Iterable
 
 log = logging.getLogger(__name__)
 
-HEADER_SIGNATURE = ("", "Transaction date", "Transaction type", "#")
-TOTAL_PREFIX = "Total for "
-GRAND_TOTAL_LABEL = "TOTAL"
+# Accept English OR French header signatures — QBO French exports use
+# "Date de transaction" / "Type de transaction" in place of the English ones.
+HEADER_SIGNATURES: tuple[tuple[str, ...], ...] = (
+    ("", "Transaction date", "Transaction type", "#"),
+    ("", "Date de transaction", "Type de transaction", "Nº"),
+    ("", "Date de transaction", "Type de transaction", "No"),
+    ("", "Date de transaction", "Type de transaction", "#"),
+)
+# Accept both "Total for X" and "Total pour X" prefixes for group-total rows.
+TOTAL_PREFIXES: tuple[str, ...] = ("Total for ", "Total pour ")
+GRAND_TOTAL_LABELS: tuple[str, ...] = ("TOTAL",)
 
-# Column-name synonyms — different QBO export configs use different labels for
-# the same field. The parser looks up each column by trying these names in order.
+# Column-name synonyms — different QBO export configs and locales use different
+# labels for the same field. The parser looks up each column by trying these
+# names in order.
 _COLUMN_SYNONYMS: dict[str, tuple[str, ...]] = {
-    "date":    ("Transaction date",),
-    "type":    ("Transaction type",),
-    "num":     ("#", "Num"),
-    "name":    ("Name",),
-    "desc":    ("Description", "Memo"),
-    "account": ("Account full name", "Full name", "Split"),
-    "debit":   ("Debit",),
-    "credit":  ("Credit",),
+    "date":    ("Transaction date", "Date de transaction"),
+    "type":    ("Transaction type", "Type de transaction"),
+    "num":     ("#", "Num", "Nº", "No"),
+    "name":    ("Name", "Nom"),
+    "desc":    ("Description", "Memo", "Mémo"),
+    "account": ("Account full name", "Full name", "Split",
+                "Nom complet du compte", "Compte", "Nom du compte"),
+    "debit":   ("Debit", "Débit"),
+    "credit":  ("Credit", "Crédit"),
 }
 
 # QBO exports from Excel are typically cp1252 on Canadian/French locales — try
@@ -185,12 +195,15 @@ def parse_journal_rows(rows: list[list[str]]) -> JournalReport:
             continue
 
         # Grand-total row at end of report.
-        if first_cell == "" and second_cell == GRAND_TOTAL_LABEL:
+        if first_cell == "" and second_cell in GRAND_TOTAL_LABELS:
             current_group = None
             continue
 
-        if first_cell.startswith(TOTAL_PREFIX):
-            gid = first_cell[len(TOTAL_PREFIX):].strip()
+        matched_total_prefix = next(
+            (p for p in TOTAL_PREFIXES if first_cell.startswith(p)), None
+        )
+        if matched_total_prefix is not None:
+            gid = first_cell[len(matched_total_prefix):].strip()
             try:
                 reported[gid] = JournalGroupTotals(
                     group_id=gid,
@@ -230,14 +243,15 @@ def parse_journal_rows(rows: list[list[str]]) -> JournalReport:
 def _parse_preamble(rows: list[list[str]]) -> tuple[str, str, int, _ColumnMap]:
     """Return (company, period, header_row_index, column_map).
 
-    Finds the header row by signature match on the first 4 cells, then builds a
-    ``_ColumnMap`` by looking up each expected logical column via ``_COLUMN_SYNONYMS``.
+    Finds the header row by matching any of the accepted signatures on the first
+    4 cells (English or French QBO exports), then builds a ``_ColumnMap`` by
+    looking up each expected logical column via ``_COLUMN_SYNONYMS``.
     """
     company = ""
     period = ""
     for i, row in enumerate(rows[:15]):
         header_cells = [str(c).strip() if c is not None else "" for c in row]
-        if len(header_cells) >= 4 and tuple(header_cells[:4]) == HEADER_SIGNATURE:
+        if len(header_cells) >= 4 and tuple(header_cells[:4]) in HEADER_SIGNATURES:
             return company, period, i, _build_column_map(header_cells)
         # Row 0 = title ("Journal"); row 1 = company; row 2 = period.
         first = header_cells[0] if header_cells else ""
@@ -247,7 +261,7 @@ def _parse_preamble(rows: list[list[str]]) -> tuple[str, str, int, _ColumnMap]:
             period = first.strip('"')
     raise JournalParseError(
         "Could not find QBO Journal header row "
-        f"(expected {HEADER_SIGNATURE!r} in first 15 rows)"
+        f"(tried signatures {HEADER_SIGNATURES!r} in first 15 rows)"
     )
 
 

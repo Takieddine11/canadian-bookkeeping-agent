@@ -17,6 +17,7 @@ from src.parsers.journal import (
 )
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "journal_sample.csv"
+FIXTURE_FR = Path(__file__).parent.parent / "fixtures" / "journal_fr.csv"
 
 
 def test_parses_preamble() -> None:
@@ -122,6 +123,23 @@ def test_missing_header_raises() -> None:
 def test_empty_file_raises() -> None:
     with pytest.raises(JournalParseError):
         parse_journal_rows([])
+
+
+def test_french_journal_parses() -> None:
+    """French QBO journal export — FR headers + 'Total pour' + French account names."""
+    r = parse_journal_csv(FIXTURE_FR)
+    assert r.company == "Client Test Inc."
+    groups = r.groups()
+    assert set(groups) == {"324", "132"}
+    # Group totals captured from 'Total pour <gid>' rows.
+    assert r.reported_totals["324"].debit == Decimal("330")
+    assert r.reported_totals["132"].debit == Decimal("270.32")
+    # Balances hold (our fixture is deliberately balanced).
+    assert r.unbalanced_groups() == []
+    # French column names (Nom complet du compte / Débit / Crédit) resolve correctly.
+    loyer = groups["324"][0]
+    assert loyer.account == "Loyer"
+    assert loyer.debit == Decimal("330")
 
 
 def test_bad_date_row_is_skipped_not_fatal(caplog: pytest.LogCaptureFixture) -> None:

@@ -1,0 +1,14 @@
+Journal,,,,,,,,
+Client Test Inc.,,,,,,,,
+"Du 1 janvier au 31 décembre 2025",,,,,,,,
+
+,Date de transaction,Type de transaction,Nº,Nom,Description,Nom complet du compte,Débit,Crédit
+324,,,,,,,,
+,01/01/2025,Écriture,23,,Loyer janvier,Loyer,330.00,
+,01/01/2025,Écriture,23,,Loyer janvier,Prêts aux actionnaires,,330.00
+Total pour 324,,,,,,,$330.00,$330.00
+132,,,,,,,,
+,30/01/2025,Écriture,1,,"PAIEMENT FACTURE REVENU QUEBEC",TPS/TVH à payer,255.32,
+,30/01/2025,Écriture,1,,"SERVICE CHARGE, 1/31","Finance Cost:Frais bancaires",15.00,
+,30/01/2025,Écriture,1,,"Ventes INTERAC",Ventes,,"270.32"
+Total pour 132,,,,,,,$270.32,$270.32
