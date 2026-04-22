@@ -211,6 +211,51 @@ def test_vendor_invoice_verification_always_fires(
     assert "invoice" in v.proposed_fix.lower()
 
 
+def test_government_refund_credit_to_tax_account_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """A deposit from Revenu Québec credited to the QST account instead of debited
+    is the classic direction-flip error — must be flagged as ERROR-severity."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2024")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2024", [
+        # Refund deposit: cash in, wrong direction on tax account
+        ("1", "16/09/2024", "Deposit", "", "RQ",
+         "GOUV. QUÉBEC Paiement divers", "Bank", "1202.67", ""),
+        ("1", "16/09/2024", "Deposit", "", "RQ",
+         "GOUV. QUÉBEC Paiement divers", "GST/HST Payable", "", "1202.67"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_tax(store, eng)
+    f = _find(findings, "tax_refund_direction")
+    assert f is not None
+    assert f.severity == SEVERITY_ERROR
+    assert "1,202.67" in f.detail or "1202.67" in f.detail
+    assert "flip" in f.proposed_fix.lower()
+
+
+def test_legitimate_tax_credit_on_sale_not_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """A regular sales invoice crediting the tax account is legitimate —
+    the description doesn't mention the government, so no flag."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2024")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2024", [
+        ("1", "15/06/2024", "Invoice", "", "Acme Customer",
+         "Consulting services Q2", "A/R", "1149.75", ""),
+        ("1", "15/06/2024", "Invoice", "", "Acme Customer",
+         "Consulting services Q2", "Revenue", "", "1000.00"),
+        ("1", "15/06/2024", "Invoice", "", "Acme Customer",
+         "Consulting services Q2", "GST/HST Payable", "", "149.75"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_tax(store, eng)
+    f = _find(findings, "tax_refund_direction")
+    assert f is not None
+    assert f.severity == SEVERITY_OK  # no suspicious lines
+
+
 def test_rate_outlier_flagged(store: EngagementStore, tmp_path: Path) -> None:
     eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
     j = tmp_path / "j.csv"

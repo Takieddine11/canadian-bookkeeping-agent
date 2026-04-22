@@ -124,6 +124,7 @@ def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
     findings: list[Finding] = []
     findings.extend(_tax_account_inventory(report))
     findings.extend(_net_tax_position(report, bs_doc))
+    findings.extend(_tax_refund_direction_audit(report))
     vendor_stats = _compute_vendor_stats(report)
     quick_method = _detect_quick_method_pattern(vendor_stats)
     findings.extend(_top_vendors(vendor_stats))
@@ -190,6 +191,93 @@ def _tax_account_inventory(report: JournalReport) -> list[Finding]:
         ))
 
     return findings
+
+
+# Keywords that strongly indicate a transaction involves a government agency —
+# CRA (federal, Agence du Revenu du Canada / ARC) or Revenu Québec (RQ) or a
+# generic "government" descriptor. A line hitting a tax liability account with
+# one of these in the memo is almost certainly a REMITTANCE TO or REFUND FROM
+# the tax authority. Both should be DEBITS that reduce the liability; booking
+# them as CREDITS is the classic direction-flip error.
+_GOVT_TAX_KEYWORDS = (
+    # English — CRA / ARC
+    "cra ", " cra", "canada revenue", "canada revenue agency", "arc ",
+    "gst refund", "hst refund", "tax refund", "income tax refund",
+    # French — Revenu Québec
+    "revenu quebec", "revenu québec", "rq ", "rq tps", "rq tvq",
+    "gouvernement du québec", "gouvernement du quebec",
+    "gouv. qc", "gouv. québec", "gouv. quebec",
+    "paiement divers",
+    # Generic
+    "refund", "remboursement", "remb. ", "remb ", "rebate",
+    "crédit d'impôt", "credit d'impot",
+    "remise tps", "remise tvq", "remise gst", "remise hst",
+)
+
+
+def _tax_refund_direction_audit(report: JournalReport) -> list[Finding]:
+    """Government refunds/remittances on tax accounts should reduce the
+    liability (debit), not increase it (credit). Catch the classic direction-flip.
+
+    Real-world incident (Cleany Québec, Sep 2024):
+      - 16/09 Deposit "GOUV. QUÉBEC Paiement divers" $1,202.67 → credited to
+        QST Suspense account (increased liability)
+      - 19/09 Deposit "RQ TPS" $602.84 → same pattern
+    CPA caught it during T2 prep; correction was to flip both lines to debits,
+    dropping Suspense by $3,611.02 (2× the credit total).
+
+    Signal:
+      - Line hits a tax liability account (GST/HST/QST/TVQ/PST/TPS account).
+      - Line is a CREDIT > 0 (increases the liability).
+      - Description contains a government-keyword phrase.
+
+    Credits to tax accounts are legitimate when they represent tax *collected*
+    on a sale (e.g., "HST on customer invoice"). They are NOT legitimate when
+    described in government-remittance / refund language.
+    """
+    suspicious: list[JournalLine] = []
+    for line in report.lines:
+        if not _matches(line.account, _ALL_TAX_TOKENS):
+            continue
+        if line.credit <= _ZERO:
+            continue
+        desc_lower = line.description.lower()
+        if not any(kw in desc_lower for kw in _GOVT_TAX_KEYWORDS):
+            continue
+        suspicious.append(line)
+
+    if not suspicious:
+        return [Finding(
+            agent=AGENT, check="tax_refund_direction", severity=SEVERITY_OK,
+            title="No miscoded government refunds/remittances detected on tax accounts",
+        )]
+
+    wrong_credit_total = sum((l.credit for l in suspicious), _ZERO)
+    correction_impact = wrong_credit_total * 2  # flipping a credit to debit swings by 2x
+
+    detail_lines = [
+        f"• {l.txn_date.isoformat()}  ${l.credit:,.2f}  [{l.account}]  "
+        f"{l.description[:90] + ('…' if len(l.description) > 90 else '')}"
+        for l in suspicious
+    ]
+
+    return [Finding(
+        agent=AGENT, check="tax_refund_direction", severity=SEVERITY_ERROR,
+        title=(
+            f"{len(suspicious)} tax-account credit(s) describing government activity "
+            f"(${wrong_credit_total:,.2f}) — likely a direction-flip error; "
+            f"correction impact ~${correction_impact:,.2f}"
+        ),
+        detail="\n".join(detail_lines),
+        proposed_fix=(
+            "Government refunds received and remittances paid should DEBIT the tax "
+            "liability account (reducing the balance), not CREDIT it (increasing). "
+            "For each flagged transaction, open it in QBO and flip the tax-account "
+            "line from credit to debit. Verify each amount against the Notice of "
+            f"Assessment / Revenu Québec statement first. Expected combined balance "
+            f"reduction after all corrections: ${correction_impact:,.2f}."
+        ),
+    )]
 
 
 def _net_tax_position(
