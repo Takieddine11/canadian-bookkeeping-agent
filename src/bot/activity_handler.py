@@ -830,7 +830,7 @@ class AuditBot(TeamsActivityHandler):
             },
         )
 
-async def _summarize_statement(
+    async def _summarize_statement(
         self, turn_context: TurnContext, path: Path, doc_type: str
     ) -> None:
         """Parse the uploaded BS or P&L and post a summary adaptive card."""
