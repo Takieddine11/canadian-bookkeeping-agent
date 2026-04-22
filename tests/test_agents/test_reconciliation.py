@@ -83,21 +83,148 @@ def test_clean_journal_all_ok(store: EngagementStore, tmp_path: Path) -> None:
     assert _find(findings, "monthly_activity").severity == SEVERITY_INFO
 
 
-def test_exact_duplicate_flagged(store: EngagementStore, tmp_path: Path) -> None:
+def test_high_confidence_duplicate_flagged(store: EngagementStore, tmp_path: Path) -> None:
+    """Material-amount, same-vendor, same-day, same-memo across different entry IDs."""
     eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
     path = tmp_path / "j.csv"
     _write_journal(path, "January-December 2025", [
-        ("1", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Supplies", "50.00", ""),
-        ("1", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Cash", "", "50.00"),
-        ("2", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Supplies", "50.00", ""),
-        ("2", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Cash", "", "50.00"),
+        ("1", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Supplies", "250.00", ""),
+        ("1", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Cash", "", "250.00"),
+        ("2", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Supplies", "250.00", ""),
+        ("2", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Cash", "", "250.00"),
     ])
     store.attach_document(eng.engagement_id, DOC_JOURNAL, path)
 
     findings = run_recon(store, eng)
     dup = _find(findings, "duplicates")
     assert dup.severity == SEVERITY_WARN
-    assert "duplicate group" in dup.title.lower()
+    assert "duplicate" in dup.title.lower()
+    assert "Acme" in dup.detail
+
+
+def test_small_amount_repeats_not_flagged(store: EngagementStore, tmp_path: Path) -> None:
+    """$1.50 Interac fees repeated = legitimate bank activity, not duplicates."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    path = tmp_path / "j.csv"
+    rows = []
+    for i in range(5):
+        grp = str(100 + i)
+        rows.append((grp, f"{10 + i:02d}/06/2025", "Expense", "", "RBC",
+                     "Service Charge INTERAC E-TRANSFER FEE",
+                     "Finance Cost:Bank Charges", "1.50", ""))
+        rows.append((grp, f"{10 + i:02d}/06/2025", "Expense", "", "RBC",
+                     "Service Charge INTERAC E-TRANSFER FEE",
+                     "Bank", "", "1.50"))
+    _write_journal(path, "January-December 2025", rows)
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, path)
+
+    findings = run_recon(store, eng)
+    dup = _find(findings, "duplicates")
+    assert dup.severity == SEVERITY_OK
+
+
+def test_recurring_subscription_not_flagged(store: EngagementStore, tmp_path: Path) -> None:
+    """4+ copies of the same entry = recurring subscription, not a duplicate."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    path = tmp_path / "j.csv"
+    rows = []
+    for i in range(5):
+        grp = str(200 + i)
+        rows.append((grp, "15/06/2025", "Expense", "", "Facebook",
+                     "Ads campaign monthly", "Marketing", "500.00", ""))
+        rows.append((grp, "15/06/2025", "Expense", "", "Facebook",
+                     "Ads campaign monthly", "Credit Card", "", "500.00"))
+    _write_journal(path, "January-December 2025", rows)
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, path)
+
+    findings = run_recon(store, eng)
+    dup = _find(findings, "duplicates")
+    assert dup.severity == SEVERITY_OK
+
+
+def test_different_vendors_not_flagged(store: EngagementStore, tmp_path: Path) -> None:
+    """Same day + amount + account but different vendors = coincidence, not dup."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    path = tmp_path / "j.csv"
+    _write_journal(path, "January-December 2025", [
+        ("1", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Supplies", "250.00", ""),
+        ("1", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Cash", "", "250.00"),
+        ("2", "15/06/2025", "Expense", "", "BrandX", "Office supplies", "Supplies", "250.00", ""),
+        ("2", "15/06/2025", "Expense", "", "BrandX", "Office supplies", "Cash", "", "250.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, path)
+
+    findings = run_recon(store, eng)
+    dup = _find(findings, "duplicates")
+    assert dup.severity == SEVERITY_OK
+
+
+def test_blank_memo_not_flagged(store: EngagementStore, tmp_path: Path) -> None:
+    """Blank memos reduce confidence → not flagged even on matching amount+vendor+date."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    path = tmp_path / "j.csv"
+    _write_journal(path, "January-December 2025", [
+        ("1", "15/06/2025", "Expense", "", "Acme", "", "Supplies", "250.00", ""),
+        ("1", "15/06/2025", "Expense", "", "Acme", "", "Cash", "", "250.00"),
+        ("2", "15/06/2025", "Expense", "", "Acme", "", "Supplies", "250.00", ""),
+        ("2", "15/06/2025", "Expense", "", "Acme", "", "Cash", "", "250.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, path)
+
+    findings = run_recon(store, eng)
+    dup = _find(findings, "duplicates")
+    assert dup.severity == SEVERITY_OK
+
+
+def test_sparse_journal_entry_memo_flagged(store: EngagementStore, tmp_path: Path) -> None:
+    """A manual JE with a generic 'adjustment' memo should be flagged for CPA review."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    path = tmp_path / "j.csv"
+    _write_journal(path, "January-December 2025", [
+        ("5", "15/06/2025", "Journal Entry", "5", "", "adjustment", "Sales", "", "1000.00"),
+        ("5", "15/06/2025", "Journal Entry", "5", "", "adjustment", "A/R", "1000.00", ""),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, path)
+
+    findings = run_recon(store, eng)
+    memos = _find(findings, "journal_entry_memos")
+    assert memos is not None
+    assert memos.severity == SEVERITY_WARN
+
+
+def test_detailed_journal_entry_memo_passes(store: EngagementStore, tmp_path: Path) -> None:
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    path = tmp_path / "j.csv"
+    _write_journal(path, "January-December 2025", [
+        ("5", "15/06/2025", "Journal Entry", "5", "",
+         "Reclassify March subcontractor payment from A/P to Accrued Expenses",
+         "Accrued Expenses", "2500.00", ""),
+        ("5", "15/06/2025", "Journal Entry", "5", "",
+         "Reclassify March subcontractor payment from A/P to Accrued Expenses",
+         "A/P", "", "2500.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, path)
+
+    findings = run_recon(store, eng)
+    memos = _find(findings, "journal_entry_memos")
+    assert memos is not None
+    assert memos.severity == SEVERITY_OK
+
+
+def test_memo_check_silent_without_manual_journal_entries(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """No manual JEs → no memo-check finding at all."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    path = tmp_path / "j.csv"
+    _write_journal(path, "January-December 2025", [
+        ("1", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Supplies", "50.00", ""),
+        ("1", "15/06/2025", "Expense", "", "Acme", "Office supplies", "Cash", "", "50.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, path)
+
+    findings = run_recon(store, eng)
+    assert _find(findings, "journal_entry_memos") is None
 
 
 def test_missing_account_only_flags_nonzero_amounts(
