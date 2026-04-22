@@ -101,9 +101,8 @@ class _VendorStats:
 
 
 def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
-    docs = store.list_documents(engagement.engagement_id)
-    journal_doc = next((d for d in docs if d.doc_type == DOC_JOURNAL), None)
-    bs_doc = next((d for d in docs if d.doc_type == DOC_BALANCE_SHEET), None)
+    journal_doc = store.latest_document(engagement.engagement_id, DOC_JOURNAL)
+    bs_doc = store.latest_document(engagement.engagement_id, DOC_BALANCE_SHEET)
 
     if journal_doc is None:
         return [Finding(

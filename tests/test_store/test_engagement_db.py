@@ -98,6 +98,27 @@ def test_attach_document_and_list(store: EngagementStore, tmp_path: Path) -> Non
     assert docs[0].original_filename == "Journal Report Q3.pdf"
 
 
+def test_latest_document_returns_newest_per_type(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """When multiple docs of the same type exist, latest_document returns the newest."""
+    eng = store.create_engagement("conv-A", CONV_PERSONAL, period_description="2025")
+    f1 = tmp_path / "j1.csv"; f1.write_bytes(b"j1")
+    f2 = tmp_path / "j2.csv"; f2.write_bytes(b"j2")
+    doc1 = store.attach_document(eng.engagement_id, DOC_JOURNAL, f1, "old.csv")
+    doc2 = store.attach_document(eng.engagement_id, DOC_JOURNAL, f2, "new.csv")
+
+    latest = store.latest_document(eng.engagement_id, DOC_JOURNAL)
+    assert latest is not None
+    assert latest.id == doc2
+    assert latest.original_filename == "new.csv"
+
+
+def test_latest_document_none_when_absent(store: EngagementStore) -> None:
+    eng = store.create_engagement("conv-A", CONV_PERSONAL, period_description="2025")
+    assert store.latest_document(eng.engagement_id, DOC_JOURNAL) is None
+
+
 def test_attach_document_unknown_engagement_raises(store: EngagementStore) -> None:
     with pytest.raises(KeyError):
         store.attach_document("does-not-exist", DOC_JOURNAL, "/tmp/x.pdf")

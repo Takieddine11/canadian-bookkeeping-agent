@@ -54,8 +54,7 @@ class _DupKey:
 
 def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
     """Run reconciliation checks. Returns empty list if no journal is uploaded."""
-    docs = store.list_documents(engagement.engagement_id)
-    journal_doc = next((d for d in docs if d.doc_type == DOC_JOURNAL), None)
+    journal_doc = store.latest_document(engagement.engagement_id, DOC_JOURNAL)
     if journal_doc is None:
         return [Finding(
             agent=AGENT, check="journal_present", severity=SEVERITY_ERROR,

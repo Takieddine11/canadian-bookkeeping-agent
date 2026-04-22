@@ -295,6 +295,39 @@ class EngagementStore:
             )
             return int(cur.lastrowid)
 
+    def latest_document(
+        self, engagement_id: str, doc_type: str
+    ) -> Document | None:
+        """Return the most recently uploaded document of the given type.
+
+        Belt-and-suspenders for engagements that accumulated multiple copies of
+        the same doc_type (re-uploads after Request Changes, accidental adds).
+        Agents should always use this rather than picking the first match in
+        ``list_documents`` — the latter returns ascending insertion order, so
+        the oldest wins, which historically caused stale-data bugs.
+        """
+        db_path = self._require_db_path(engagement_id)
+        with _connect(db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT id, doc_type, file_path, original_filename, uploaded_at
+                FROM documents
+                WHERE doc_type = ?
+                ORDER BY uploaded_at DESC, id DESC
+                LIMIT 1
+                """,
+                (doc_type,),
+            ).fetchone()
+        if row is None:
+            return None
+        return Document(
+            id=row["id"],
+            doc_type=row["doc_type"],
+            file_path=row["file_path"],
+            original_filename=row["original_filename"],
+            uploaded_at=row["uploaded_at"],
+        )
+
     def list_documents(self, engagement_id: str) -> list[Document]:
         db_path = self._require_db_path(engagement_id)
         with _connect(db_path) as conn:

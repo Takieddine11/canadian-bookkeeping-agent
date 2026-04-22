@@ -53,9 +53,11 @@ _IDENTITY_TOLERANCE = Decimal("0.01")  # 1 cent rounding tolerance
 
 def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
     """Run all rollforward checks for the engagement and return findings."""
-    docs = store.list_documents(engagement.engagement_id)
-    bs_doc = next((d for d in docs if d.doc_type == DOC_BALANCE_SHEET), None)
-    pnl_doc = next((d for d in docs if d.doc_type == DOC_PNL), None)
+    # Always use the LATEST doc per type — an engagement can accumulate
+    # re-uploads, and picking the oldest (via list_documents' ascending order)
+    # is how stale data bugs happen.
+    bs_doc = store.latest_document(engagement.engagement_id, DOC_BALANCE_SHEET)
+    pnl_doc = store.latest_document(engagement.engagement_id, DOC_PNL)
 
     findings: list[Finding] = []
 

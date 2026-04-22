@@ -82,7 +82,6 @@ INTAKE_CARD_PATH = _CARDS_DIR / "intake_request.json"
 INTAKE_PROGRESS_CARD_PATH = _CARDS_DIR / "intake_progress.json"
 JOURNAL_SUMMARY_CARD_PATH = _CARDS_DIR / "journal_summary.json"
 STATEMENT_SUMMARY_CARD_PATH = _CARDS_DIR / "statement_summary.json"
-AUDIT_STARTED_CARD_PATH = _CARDS_DIR / "audit_started.json"
 AGENT_FINDINGS_CARD_PATH = _CARDS_DIR / "agent_findings.json"
 CPA_MEMO_CARD_PATH = _CARDS_DIR / "cpa_memo.json"
 CPA_MEMO_LLM_CARD_PATH = _CARDS_DIR / "cpa_memo_llm.json"
@@ -151,21 +150,28 @@ class AuditBot(TeamsActivityHandler):
         # `new audit <period>` — start the (existing) audit flow
         match = _TRIGGER_RE.match(text) if text else None
         if match:
-            # If an active cleanup engagement exists, auto-complete it first so the
-            # bookkeeper doesn't have to type `done` explicitly. Common flow: they
-            # worked through the SOP, then typed `new audit <period>` to move on.
+            # Always auto-close any active engagement before starting a new one.
+            # If the bookkeeper is typing `new audit`, they mean a fresh start — a
+            # different client, a new period, or a clean re-run. Carrying the old
+            # engagement forward is how we end up with two clients' files glued
+            # together in a single engagement (real incident, 2026-04-22).
             conversation_id = turn_context.activity.conversation.id
             existing = self.store.get_active_engagement(conversation_id)
-            if existing is not None and existing.mode == MODE_CLEANUP:
+            if existing is not None:
                 self.store.update_phase(existing.engagement_id, PHASE_DELIVERED)
+                mode_label = (
+                    f"cleanup (step {existing.cleanup_step_index + 1} of "
+                    f"{len(agent_cleanup_coach.STEPS)})"
+                    if existing.mode == MODE_CLEANUP
+                    else f"audit (phase `{existing.phase}`)"
+                )
                 await turn_context.send_activity(MessageFactory.text(
-                    f"✅ Cleanup engagement `{existing.engagement_id}` closed "
-                    f"(stopped at step {existing.cleanup_step_index + 1} / "
-                    f"{len(agent_cleanup_coach.STEPS)}). Starting audit now."
+                    f"✅ Previous engagement `{existing.engagement_id}` "
+                    f"({mode_label}) closed. Starting fresh."
                 ))
                 log.info(
-                    "cleanup.auto_closed_on_audit_trigger engagement=%s at_step=%d",
-                    existing.engagement_id, existing.cleanup_step_index,
+                    "engagement.auto_closed_on_new_audit prior=%s mode=%s phase=%s",
+                    existing.engagement_id, existing.mode, existing.phase,
                 )
             await self._start_engagement(turn_context, period=match.group(1))
             if attachments:
@@ -211,16 +217,20 @@ class AuditBot(TeamsActivityHandler):
         conversation_type = self._conversation_type(turn_context)
         user_aad_id = self._user_aad_id(turn_context)
 
+        # Same auto-close policy as `new audit` — explicit `new cleanup` means fresh start.
         existing = self.store.get_active_engagement(conversation_id)
         if existing is not None:
+            self.store.update_phase(existing.engagement_id, PHASE_DELIVERED)
             await turn_context.send_activity(
                 MessageFactory.text(
-                    f"An engagement is already active here "
-                    f"(id `{existing.engagement_id}`, mode `{existing.mode}`, "
-                    f"phase `{existing.phase}`). Close it before starting cleanup."
+                    f"✅ Previous engagement `{existing.engagement_id}` closed. "
+                    "Starting cleanup."
                 )
             )
-            return
+            log.info(
+                "engagement.auto_closed_on_new_cleanup prior=%s mode=%s",
+                existing.engagement_id, existing.mode,
+            )
 
         engagement = self.store.create_engagement(
             conversation_id=conversation_id,
@@ -532,11 +542,24 @@ class AuditBot(TeamsActivityHandler):
             )
             return
         if verb == "cpa_request_changes":
+            # Close the engagement so the bookkeeper can't accidentally drop the
+            # revised files into the same (now-stale) engagement. Force an
+            # explicit `new audit <period>` to start the rework with a clean slate.
+            if engagement_id:
+                self.store.update_phase(engagement_id, PHASE_DELIVERED)
             await turn_context.send_activity(
                 MessageFactory.text(
-                    f"🔄 Engagement `{engagement_id}` sent back to the bookkeeper. "
-                    f"Resolve the flagged items and re-run with `ready`."
+                    f"🔄 Engagement `{engagement_id}` sent back. Fix the flagged "
+                    f"items in QBO, then start the rework with a fresh engagement:\n\n"
+                    f"    new audit <period>\n\n"
+                    "Drop the re-exported Journal / BS / P&L and type `ready` to run "
+                    "the audit again. Starting fresh prevents old and new files from "
+                    "getting mixed in the same engagement."
                 )
+            )
+            log.info(
+                "card.action.request_changes engagement=%s closed=True",
+                engagement_id,
             )
             return
         log.warning("card.action.unknown_verb verb=%s", verb)
@@ -609,23 +632,24 @@ class AuditBot(TeamsActivityHandler):
         )
 
     def _infer_company(self, engagement: Engagement) -> str | None:
-        """Best-effort lookup: parse the BS/P&L/journal title rows, if present."""
-        docs = self.store.list_documents(engagement.engagement_id)
-        for doc in docs:
+        """Best-effort lookup: parse the latest BS/P&L/journal title rows, if present."""
+        eid = engagement.engagement_id
+        for doc_type, parse in (
+            (DOC_BALANCE_SHEET, parse_balance_sheet),
+            (DOC_PNL, parse_pnl),
+            (DOC_JOURNAL, parse_journal_csv),
+        ):
+            doc = self.store.latest_document(eid, doc_type)
+            if doc is None:
+                continue
             try:
-                if doc.doc_type == DOC_BALANCE_SHEET:
-                    return parse_balance_sheet(Path(doc.file_path)).company
-                if doc.doc_type == DOC_PNL:
-                    return parse_pnl(Path(doc.file_path)).company
-                if doc.doc_type == DOC_JOURNAL:
-                    return parse_journal_csv(Path(doc.file_path)).company
+                return parse(Path(doc.file_path)).company
             except Exception:
                 continue
         return None
 
     def _bs_highlights(self, engagement: Engagement) -> dict[str, str]:
-        docs = self.store.list_documents(engagement.engagement_id)
-        doc = next((d for d in docs if d.doc_type == DOC_BALANCE_SHEET), None)
+        doc = self.store.latest_document(engagement.engagement_id, DOC_BALANCE_SHEET)
         if doc is None:
             return {}
         try:
@@ -642,8 +666,7 @@ class AuditBot(TeamsActivityHandler):
         return out
 
     def _pnl_highlights(self, engagement: Engagement) -> dict[str, str]:
-        docs = self.store.list_documents(engagement.engagement_id)
-        doc = next((d for d in docs if d.doc_type == DOC_PNL), None)
+        doc = self.store.latest_document(engagement.engagement_id, DOC_PNL)
         if doc is None:
             return {}
         try:
@@ -697,8 +720,7 @@ class AuditBot(TeamsActivityHandler):
 
     def _journal_stats_line(self, engagement_id: str) -> str:
         """One-line journal summary for the memo-card header."""
-        docs = self.store.list_documents(engagement_id)
-        doc = next((d for d in docs if d.doc_type == DOC_JOURNAL), None)
+        doc = self.store.latest_document(engagement_id, DOC_JOURNAL)
         if doc is None:
             return "—"
         try:
@@ -713,8 +735,7 @@ class AuditBot(TeamsActivityHandler):
         )
 
     def _bs_stats_line(self, engagement_id: str) -> str:
-        docs = self.store.list_documents(engagement_id)
-        doc = next((d for d in docs if d.doc_type == DOC_BALANCE_SHEET), None)
+        doc = self.store.latest_document(engagement_id, DOC_BALANCE_SHEET)
         if doc is None:
             return "—"
         try:
@@ -728,8 +749,7 @@ class AuditBot(TeamsActivityHandler):
         return f"Total Assets ${ta:,.2f}, identity {identity}{basis}"
 
     def _pnl_stats_line(self, engagement_id: str) -> str:
-        docs = self.store.list_documents(engagement_id)
-        doc = next((d for d in docs if d.doc_type == DOC_PNL), None)
+        doc = self.store.latest_document(engagement_id, DOC_PNL)
         if doc is None:
             return "—"
         try:
@@ -810,51 +830,7 @@ class AuditBot(TeamsActivityHandler):
             },
         )
 
-    def _render_audit_started(self, engagement: Engagement, new_phase: str) -> dict[str, Any]:
-        """Aggregate parser outputs into the audit-started card's fields."""
-        docs = self.store.list_documents(engagement.engagement_id)
-        journal_entries = "—"
-        journal_total = "—"
-        bs_balanced = "—"
-        pnl_profit = "—"
-        company = engagement.client_id or "(not set)"
-
-        for doc in docs:
-            try:
-                if doc.doc_type == DOC_JOURNAL:
-                    r = parse_journal_csv(doc.file_path)
-                    journal_entries = str(len(r.groups()))
-                    total_debit = sum((l.debit for l in r.lines), _ZERO)
-                    journal_total = f"${total_debit:,.2f}"
-                    if r.company:
-                        company = r.company
-                elif doc.doc_type == DOC_BALANCE_SHEET:
-                    bs = parse_balance_sheet(doc.file_path)
-                    ta = bs.amount_of("Total Assets") or _ZERO
-                    tle = bs.amount_of("Total Liabilities and Equity") or _ZERO
-                    bs_balanced = "✓" if ta == tle else f"⚠ {ta:,.2f} vs {tle:,.2f}"
-                elif doc.doc_type == DOC_PNL:
-                    pl = parse_pnl(doc.file_path)
-                    profit = pl.amount_of("PROFIT")
-                    if profit is not None:
-                        pnl_profit = f"${profit:,.2f}"
-            except Exception:
-                log.exception("audit_started.parse_failed doc=%s", doc.file_path)
-
-        doc_list = ", ".join(sorted({_DOC_LABELS.get(d.doc_type, d.doc_type) for d in docs})) or "—"
-        card = json.loads(AUDIT_STARTED_CARD_PATH.read_text(encoding="utf-8"))
-        return _substitute(card, {
-            "engagementId":    engagement.engagement_id,
-            "company":         company,
-            "period":          engagement.period_description or "—",
-            "docList":         doc_list,
-            "journalEntries":  journal_entries,
-            "journalTotal":    journal_total,
-            "bsBalanced":      bs_balanced,
-            "pnlProfit":       pnl_profit,
-        })
-
-    async def _summarize_statement(
+async def _summarize_statement(
         self, turn_context: TurnContext, path: Path, doc_type: str
     ) -> None:
         """Parse the uploaded BS or P&L and post a summary adaptive card."""
