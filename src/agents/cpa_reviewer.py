@@ -144,6 +144,52 @@ class LlmAdjustingEntry(BaseModel):
     description: str = Field(description="Memo explaining the entry")
 
 
+class LlmFinding(BaseModel):
+    """One item in the review memo — blocking issue or judgment note.
+
+    Each finding carries a priority rank, a responsible role, and a
+    plain-language action line aimed at that role. A bookkeeper scanning
+    the card should be able to filter to their role and see only what
+    they should touch.
+    """
+
+    priority: int = Field(
+        ge=1,
+        description=(
+            "1 = highest priority, count upward. Priority is assigned across the "
+            "COMBINED list of blocking_issues + judgment_notes. Every finding in "
+            "blocking_issues MUST have a lower priority number than every item in "
+            "judgment_notes."
+        ),
+    )
+    responsible: str = Field(
+        description=(
+            "Who should act on this finding. Must be one of: "
+            "'bookkeeper' (fix in QBO, pull docs, obtain invoices), "
+            "'CPA' (apply professional judgment, write-off, reclassification decision), "
+            "'client' (confirm facts, provide documents, answer business questions), "
+            "'shareholder' (sign a confirmation letter, inject capital, convert loan). "
+            "Pick exactly one — the party PRIMARILY responsible for resolving."
+        ),
+    )
+    title: str = Field(
+        description="One-line headline. Include the specific dollar amount or entry # when known."
+    )
+    detail: str = Field(
+        description="1-2 sentences of context or evidence. Skip if title says it all."
+    )
+    plain_language_action: str = Field(
+        description=(
+            "A single concrete action for the responsible party, in plain language. "
+            "Examples: 'Open JE #3 in QBO and add a memo explaining the shareholder "
+            "transfer.' 'Confirm with Cleany whether supplies were on hand at year-end.' "
+            "'Sign a letter confirming the Nov 16 Interac transfer was a personal "
+            "expense reimbursement.' NO CPA jargon when responsible='bookkeeper' or 'client' — "
+            "write as if to a junior employee, not a senior colleague."
+        ),
+    )
+
+
 class LlmReviewOutput(BaseModel):
     """Structured output from Opus 4.7 synthesizing the deterministic findings."""
 
@@ -153,16 +199,17 @@ class LlmReviewOutput(BaseModel):
             "single most consequential issue. Direct, non-hedging."
         )
     )
-    blocking_issues: list[str] = Field(
+    blocking_issues: list[LlmFinding] = Field(
         description=(
-            "Items that MUST be resolved before sign-off, in priority order. Apply "
-            "CPA judgment — the deterministic agents may over-flag; trim false positives."
+            "Items that MUST be resolved before sign-off. Ordered by the 'priority' "
+            "field on each finding. Apply CPA judgment — deterministic agents "
+            "over-flag; trim false positives."
         )
     )
-    judgment_notes: list[str] = Field(
+    judgment_notes: list[LlmFinding] = Field(
         description=(
             "Warnings where the CPA must use judgment on whether each is material "
-            "or systemic. Explain the trade-off in one sentence each."
+            "or systemic. Priority numbers continue after blocking_issues."
         )
     )
     proposed_adjustments: list[LlmAdjustingEntry] = Field(
@@ -173,8 +220,9 @@ class LlmReviewOutput(BaseModel):
     )
     questions_for_client: list[str] = Field(
         description=(
-            "Questions the CPA cannot answer from the numeric data alone and should "
-            "ask the bookkeeper or the client directly."
+            "Questions the client must answer directly — business facts the data can't "
+            "reveal. Do NOT put bookkeeper tasks here; those belong in blocking_issues "
+            "or judgment_notes with responsible='bookkeeper'."
         )
     )
     sign_off_ready: bool = Field(
@@ -215,32 +263,66 @@ taxable sales ≤ $400,000. Under Quick Method:
 
 # How to apply judgment
 
-**The bookkeeper sees only YOUR output.** The deterministic findings are raw input for you — they are NOT shown to the bookkeeper as separate cards. Your job is to be ruthlessly selective. A single cluttered memo is worse than a short one that misses a low-priority item.
+**The bookkeeper sees only YOUR output.** The deterministic findings are raw input for you — they are NOT shown to the bookkeeper as separate cards. Your job is to be ruthlessly selective and to organize findings so each one is immediately actionable by the right person.
 
 ## The 90% rule (hard filter)
 
-Include a finding in **blocking_issues** or **judgment_notes** ONLY if you're ≥90% confident it represents a real concern a CPA would act on. If you're unsure, leave it out. Specifically:
+Include a finding in **blocking_issues** or **judgment_notes** ONLY if you're ≥90% confident it represents a real concern a CPA would act on. Specifically:
 
-- **blocking_issues** = items a CPA would insist be resolved before sign-off. Examples: BS doesn't balance, profit doesn't tie between BS and P&L, missing sales-tax account on a registered business, material duplicate transactions, unfiled GST/HST/QST return with balance owing.
-- **judgment_notes** = items the CPA should review and make a decision on, but where the coding may well be correct. Examples: Interac deposits needing receipt/shareholder-confirmation on file, non-zero GST/HST Suspense balance, rate outliers at a specific vendor, Quick Method pattern to confirm.
-- **SKIP as noise**: informational context (top vendor lists, bank balance snapshots, tax account inventory, monthly activity breakdowns, "all N checks passed" OK findings, rate-bucket summaries). These are raw input, not output.
+- **blocking_issues** = items that MUST be resolved before sign-off. Examples: BS doesn't balance, profit doesn't tie, material duplicate transactions, unfiled return with balance owing, untraceable material journal entries.
+- **judgment_notes** = items requiring CPA judgment on whether material or systemic. Examples: Interac deposits needing doc-on-file confirmation, GST/HST Suspense non-zero, vendor rate outliers, Quick Method pattern to confirm.
+- **SKIP as noise**: top-vendor lists, tax-account inventory, monthly activity, bank-balance snapshots, "all N checks passed" OK findings, rate-bucket summaries. These are raw input, NOT output.
+
+## Role tagging (every finding gets one)
+
+Every finding must be tagged with ONE responsible party via the `responsible` field:
+
+- **`bookkeeper`** — actions in QBO (add memos to JEs, obtain sample invoices from vendors, delete confirmed duplicates, verify tax codes in the Tax Center, reconcile accounts). The bookkeeper owns the books; they fix hygiene and collect documentation.
+- **`CPA`** — applies professional judgment (materiality calls, write-off decisions, reclassification choices, going-concern considerations, complex compliance calls). The CPA doesn't touch QBO but makes the decision the bookkeeper executes.
+- **`client`** — confirms business facts or provides documents the data can't reveal (year-end inventory count, existence of contracts, registration numbers, whether a payment was personal vs business). This is the owner/manager of the audited business.
+- **`shareholder`** — specifically personal actions by the owner-shareholder (signing a confirmation that an Interac transfer is a loan, converting a shareholder loan to equity, injecting capital). Use ONLY when the shareholder personally must act — if it's the business's action, use `client`.
+
+Pick exactly one per finding — the party PRIMARILY responsible for the first action. Don't hedge.
+
+## Priority
+
+Assign `priority` as a rank number, 1 = most urgent, across the COMBINED blocking + judgment list. Every blocking item's priority number must be lower (more urgent) than every judgment item's. Priority within each list is by (a) compliance risk (CRA/RQ reassessment exposure) first, (b) materiality in dollars, (c) how long the fix takes.
+
+## Plain-language action
+
+For each finding, write a **one-line concrete action** in `plain_language_action` aimed at the responsible role:
+
+- For `bookkeeper`: no CPA jargon. Tell them which screen to open in QBO, which number to enter, which vendor to email. Example: *"Open JE #3 in QBO (Company → Make General Journal Entries → search 3), click into the Memo field, and write 1-2 sentences explaining what this entry corrects."* NOT *"Populate the narrative field on the manual journal entry to satisfy documentation requirements."*
+- For `client`: plain questions, no accounting terms. Example: *"Did you have any cleaning supplies or materials still on hand at December 31, 2024? Roughly what were they worth?"* NOT *"Please provide the closing inventory valuation."*
+- For `shareholder`: describe what to sign and why. Example: *"Please sign a short letter saying the $52.50 Interac transfer you received on Nov 16 was a personal reimbursement from the business, not a loan or gift."*
+- For `CPA`: full professional language is fine.
 
 ## Voice and length
 
 - 2-3 sentence executive summary. Direct, non-hedging. State the posture and the single most consequential concern.
-- Blocking issues in priority order (worst first). Each item ≤2 sentences.
-- Judgment notes grouped by theme when possible — if there are three GST/HST items, summarize them together rather than listing three separate bullets.
-- Proposed adjustments ONLY when the correction is concrete from the evidence (amount and accounts visible in the data). Don't invent numbers or speculate.
-- Questions for client ONLY for information you genuinely can't infer from the data alone.
+- Each finding title ≤1 line, with specific dollar amount or entry number when known.
+- Detail ≤2 sentences.
+- Proposed adjustments ONLY when the correction is concrete from the evidence (amount and accounts visible in the data). Don't invent numbers.
+- `questions_for_client` = only things the CLIENT can answer (business facts). Bookkeeper tasks go in blocking/judgment with `responsible='bookkeeper'`, NOT in questions.
+
+## Using the client profile (if provided)
+
+If a client profile is included in the user message (province, Quick Method election, inventory tracked, payroll, prior-year status, etc.), use it as DEFINITIVE:
+
+- Don't ask questions the profile already answers.
+- Don't flag items the profile resolves (e.g., if profile says Quick Method is elected, 0% vendor rates are correct — don't flag them).
+- Don't ask the client to "confirm" things the profile states.
+
+If a field is missing from the profile, then yes — ask, or flag for verification.
 
 ## Special cases
 
-- **Materiality.** Use ~5% of PROFIT or ~0.5% of revenue as a rough line for small owner-managed businesses. Small individual issues still matter if they're systemic or create compliance risk.
-- **Error ≠ blocking.** The deterministic agents use ERROR severity for rule failures that may or may not matter to a CPA. Apply your judgment — a deterministic "error" can be a non-issue in context, and a deterministic "warning" can be a blocking issue on the facts.
-- **Be vigilant but not alarmist.** Prefer "please confirm on file" / "please verify with client" over "this is wrong." Reserve hard error language for unambiguous failures.
-- **Compliance trumps hygiene.** Bookkeeping tidiness (duplicates, missing memos) is lower priority than CRA/RQ compliance.
+- **Materiality.** Use ~5% of PROFIT or ~0.5% of revenue as a rough line. Small individual issues still matter if systemic or if they create compliance risk.
+- **Error ≠ blocking.** Deterministic ERROR severity is a rule-failure indicator, not your final word. Apply your judgment.
+- **Be vigilant but not alarmist.** Prefer "please confirm" / "please verify" over "this is wrong."
+- **Compliance trumps hygiene.** Bookkeeping tidiness < CRA/RQ compliance.
 
-Be professional, direct, and specific. Use Canadian dollar conventions and tax terminology. Prefer named accounts over vague references."""
+Be professional, direct, and specific. Canadian dollar conventions and tax terminology. Prefer named accounts over vague references."""
 
 
 def synthesize_memo_with_llm(
@@ -248,6 +330,7 @@ def synthesize_memo_with_llm(
     findings: list["Finding"],
     bs_highlights: dict[str, str] | None = None,
     pnl_highlights: dict[str, str] | None = None,
+    client_profile: dict | None = None,
 ) -> LlmReviewOutput | None:
     """Run Opus 4.7 over the deterministic memo to produce a CPA-reviewed version.
 
@@ -265,7 +348,9 @@ def synthesize_memo_with_llm(
         log.warning("cpa_reviewer.llm_skipped reason=anthropic_not_installed")
         return None
 
-    user_message = _render_user_message(memo, findings, bs_highlights, pnl_highlights)
+    user_message = _render_user_message(
+        memo, findings, bs_highlights, pnl_highlights, client_profile
+    )
 
     try:
         client = anthropic.Anthropic()
@@ -301,11 +386,28 @@ def synthesize_memo_with_llm(
     return response.parsed_output
 
 
+_PROFILE_FIELD_LABELS = {
+    "legal_name":          "Legal entity name",
+    "industry":            "Industry",
+    "province":            "Primary province of operation",
+    "fiscal_year_end":     "Fiscal year end",
+    "gst_hst_registered":  "GST/HST registered",
+    "qst_registered":      "QST registered (Quebec)",
+    "pst_registered":      "PST registered (BC/MB/SK)",
+    "quick_method_elected": "Quick Method elected (reduced-rate remittance, no ITCs on ordinary expenses)",
+    "has_inventory":       "Carries inventory",
+    "has_payroll":         "Runs payroll (T4 employees)",
+    "prior_year_filed":    "Prior-year return filed",
+    "notes":               "Additional notes",
+}
+
+
 def _render_user_message(
     memo: Memo,
     findings: list["Finding"],
     bs_highlights: dict[str, str] | None,
     pnl_highlights: dict[str, str] | None,
+    client_profile: dict | None = None,
 ) -> str:
     """Compose the structured context sent to the LLM as the user message."""
     lines: list[str] = [
@@ -319,6 +421,14 @@ def _render_user_message(
         f"- Errors: {memo.n_errors}  ·  Warnings: {memo.n_warnings}  ·  "
         f"Info: {memo.n_info}  ·  OK: {memo.n_ok}",
     ]
+
+    if client_profile:
+        lines.append("")
+        lines.append("# Client profile (DEFINITIVE — treat as confirmed facts, do not re-ask)")
+        for key, label in _PROFILE_FIELD_LABELS.items():
+            val = client_profile.get(key)
+            if val:
+                lines.append(f"- **{label}:** {val}")
 
     if bs_highlights:
         lines.append("")

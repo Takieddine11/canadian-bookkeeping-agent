@@ -107,6 +107,7 @@ class Engagement:
     db_path: Path
     mode: str = MODE_AUDIT           # MODE_CLEANUP or MODE_AUDIT
     cleanup_step_index: int = 0      # 0..N-1 as the cleanup coach advances
+    client_profile_json: str | None = None  # JSON-encoded ClientProfile, if set
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,7 @@ class EngagementStore:
             conn.executescript(_INDEX_SCHEMA)
             _migrate_add_column(conn, "engagement_index", "mode", "TEXT NOT NULL DEFAULT 'audit'")
             _migrate_add_column(conn, "engagement_index", "cleanup_step_index", "INTEGER NOT NULL DEFAULT 0")
+            _migrate_add_column(conn, "engagement_index", "client_profile_json", "TEXT")
 
     def create_engagement(
         self,
@@ -223,7 +225,7 @@ class EngagementStore:
                 """
                 SELECT engagement_id, client_id, conversation_id, conversation_type,
                        user_aad_id, period_description, phase, created_at, db_path,
-                       mode, cleanup_step_index
+                       mode, cleanup_step_index, client_profile_json
                 FROM engagement_index
                 WHERE conversation_id = ? AND phase != ?
                 ORDER BY created_at DESC, rowid DESC
@@ -245,7 +247,16 @@ class EngagementStore:
             db_path=Path(row["db_path"]),
             mode=row["mode"] or MODE_AUDIT,
             cleanup_step_index=row["cleanup_step_index"] or 0,
+            client_profile_json=row["client_profile_json"],
         )
+
+    def set_client_profile(self, engagement_id: str, profile_json: str) -> None:
+        """Persist the ClientProfile blob for an engagement."""
+        with _connect(self.index_path) as conn:
+            conn.execute(
+                "UPDATE engagement_index SET client_profile_json = ? WHERE engagement_id = ?",
+                (profile_json, engagement_id),
+            )
 
     def advance_cleanup_step(self, engagement_id: str, new_index: int) -> None:
         with _connect(self.index_path) as conn:

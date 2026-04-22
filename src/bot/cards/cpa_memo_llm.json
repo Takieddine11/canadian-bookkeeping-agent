@@ -35,7 +35,7 @@
         },
         {
             "type": "TextBlock",
-            "text": "**Must resolve before sign-off**",
+            "text": "**🔴 Must resolve before sign-off**",
             "wrap": true,
             "weight": "Bolder",
             "spacing": "Medium"
@@ -47,7 +47,7 @@
         },
         {
             "type": "TextBlock",
-            "text": "**Review and decide**",
+            "text": "**🟡 Review and decide**",
             "wrap": true,
             "weight": "Bolder",
             "spacing": "Medium"
@@ -59,7 +59,7 @@
         },
         {
             "type": "TextBlock",
-            "text": "**Proposed adjusting journal entries**",
+            "text": "**✏️ Proposed adjusting journal entries**",
             "wrap": true,
             "weight": "Bolder",
             "spacing": "Medium"
@@ -71,7 +71,7 @@
         },
         {
             "type": "TextBlock",
-            "text": "**Questions for the client**",
+            "text": "**💬 Questions for the client**",
             "wrap": true,
             "weight": "Bolder",
             "spacing": "Medium"

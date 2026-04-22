@@ -82,6 +82,7 @@ INTAKE_CARD_PATH = _CARDS_DIR / "intake_request.json"
 INTAKE_PROGRESS_CARD_PATH = _CARDS_DIR / "intake_progress.json"
 JOURNAL_SUMMARY_CARD_PATH = _CARDS_DIR / "journal_summary.json"
 STATEMENT_SUMMARY_CARD_PATH = _CARDS_DIR / "statement_summary.json"
+CLIENT_PROFILE_CARD_PATH = _CARDS_DIR / "client_profile.json"
 AGENT_FINDINGS_CARD_PATH = _CARDS_DIR / "agent_findings.json"
 CPA_MEMO_CARD_PATH = _CARDS_DIR / "cpa_memo.json"
 CPA_MEMO_LLM_CARD_PATH = _CARDS_DIR / "cpa_memo_llm.json"
@@ -297,6 +298,15 @@ class AuditBot(TeamsActivityHandler):
         card = self._render_intake_card(engagement)
         await turn_context.send_activity(
             MessageFactory.attachment(CardFactory.adaptive_card(card))
+        )
+        # Also post the client-profile form. Filling it is optional; if skipped, the
+        # audit still runs and the LLM will ask for the missing facts as usual.
+        profile_card = _substitute(
+            json.loads(CLIENT_PROFILE_CARD_PATH.read_text(encoding="utf-8")),
+            {"engagementId": engagement.engagement_id},
+        )
+        await turn_context.send_activity(
+            MessageFactory.attachment(CardFactory.adaptive_card(profile_card))
         )
 
     # ---- uploads ----------------------------------------------------------
@@ -541,6 +551,41 @@ class AuditBot(TeamsActivityHandler):
                 )
             )
             return
+        if verb == "save_client_profile":
+            if engagement_id:
+                # Extract only the profile keys from the submit payload; verb/engagementId
+                # etc. are not part of the profile.
+                profile_keys = (
+                    "legal_name", "industry", "province", "fiscal_year_end",
+                    "gst_hst_registered", "qst_registered", "pst_registered",
+                    "quick_method_elected", "has_inventory", "has_payroll",
+                    "prior_year_filed", "notes",
+                )
+                profile = {k: (value.get(k) or "").strip() for k in profile_keys if value.get(k)}
+                self.store.set_client_profile(engagement_id, json.dumps(profile, ensure_ascii=False))
+                filled = [k for k, v in profile.items() if v]
+                log.info(
+                    "client_profile.saved engagement=%s fields=%d",
+                    engagement_id, len(filled),
+                )
+                await turn_context.send_activity(
+                    MessageFactory.text(
+                        f"✅ Client profile saved ({len(filled)} fields). The audit will "
+                        "use these facts as definitive — fewer questions, fewer false "
+                        "flags. Drop your Journal / BS / P&L and type `ready`."
+                    )
+                )
+            return
+
+        if verb == "skip_client_profile":
+            await turn_context.send_activity(
+                MessageFactory.text(
+                    "Skipped — proceeding without a profile. The audit will ask for "
+                    "any facts it needs. Drop your Journal / BS / P&L and type `ready`."
+                )
+            )
+            return
+
         if verb == "cpa_request_changes":
             # Close the engagement so the bookkeeper can't accidentally drop the
             # revised files into the same (now-stale) engagement. Force an
@@ -581,6 +626,11 @@ class AuditBot(TeamsActivityHandler):
             "agent.cpa_reviewer.start engagement=%s input_findings=%d",
             engagement.engagement_id, len(all_findings),
         )
+        # Re-read the engagement in case the profile was submitted between engagement
+        # creation and `ready` — the caller's snapshot might not reflect it.
+        refreshed = self.store.get_active_engagement(engagement.conversation_id)
+        if refreshed is not None and refreshed.engagement_id == engagement.engagement_id:
+            engagement = refreshed
         company = self._infer_company(engagement)
         try:
             memo = agent_cpa_reviewer.build_memo(
@@ -599,10 +649,21 @@ class AuditBot(TeamsActivityHandler):
             return
 
         # Preferred path: Opus 4.7 synthesis posts a single filtered card.
+        profile_dict: dict | None = None
+        if engagement.client_profile_json:
+            try:
+                profile_dict = json.loads(engagement.client_profile_json)
+            except json.JSONDecodeError:
+                log.warning(
+                    "cpa_reviewer.profile_parse_failed engagement=%s",
+                    engagement.engagement_id,
+                )
+
         llm_output = agent_cpa_reviewer.synthesize_memo_with_llm(
             memo, all_findings,
             bs_highlights=self._bs_highlights(engagement),
             pnl_highlights=self._pnl_highlights(engagement),
+            client_profile=profile_dict,
         )
         if llm_output is not None:
             await turn_context.send_activity(
@@ -681,13 +742,43 @@ class AuditBot(TeamsActivityHandler):
                 out[name] = f"${amt:,.2f}"
         return out
 
+    # Role badges for the memo card. A visually distinct tag per responsible
+    # party so the bookkeeper can scan for their items at a glance.
+    _ROLE_BADGES = {
+        "bookkeeper":  "📒 Bookkeeper",
+        "cpa":         "🎓 CPA",
+        "client":      "🧑‍💼 Client",
+        "shareholder": "👤 Shareholder",
+    }
+
+    def _render_finding(self, f: "agent_cpa_reviewer.LlmFinding") -> str:
+        """Format one finding as a markdown block. The plain-language action is
+        surfaced distinctly so the responsible party knows exactly what to do."""
+        role = (f.responsible or "").strip().lower()
+        badge = self._ROLE_BADGES.get(role, f"👤 {role or '—'}")
+        pri = f"P{f.priority}"
+        lines = [f"**{pri} · {badge}** — {f.title}"]
+        if f.detail:
+            lines.append(f"  _{f.detail}_")
+        if f.plain_language_action:
+            lines.append(f"  ▶ **Action:** {f.plain_language_action}")
+        return "\n".join(lines)
+
     def _render_cpa_memo_llm(
         self, memo: "agent_cpa_reviewer.Memo", llm: "agent_cpa_reviewer.LlmReviewOutput"
     ) -> dict[str, Any]:
         def bullets(items: list[str], empty: str) -> str:
             return "\n\n".join(f"• {i}" for i in items) if items else f"_{empty}_"
 
-        if not llm.sign_off_ready:
+        def findings_section(
+            findings: list["agent_cpa_reviewer.LlmFinding"], empty: str
+        ) -> str:
+            if not findings:
+                return f"_{empty}_"
+            ordered = sorted(findings, key=lambda x: x.priority)
+            return "\n\n".join(self._render_finding(f) for f in ordered)
+
+        if not llm.sign_off_ready or llm.blocking_issues:
             color = "attention"
         elif memo.n_warnings > 0 or llm.judgment_notes:
             color = "warning"
@@ -711,10 +802,10 @@ class AuditBot(TeamsActivityHandler):
                 "pnlStats":         self._pnl_stats_line(memo.engagement_id),
                 "executiveSummary": llm.executive_summary,
                 "summaryColor":     color,
-                "blockingMarkdown":    bullets(llm.blocking_issues, "None."),
-                "judgmentMarkdown":    bullets(llm.judgment_notes, "None."),
+                "blockingMarkdown":    findings_section(llm.blocking_issues, "None — no blocking issues."),
+                "judgmentMarkdown":    findings_section(llm.judgment_notes, "None — nothing discretionary flagged."),
                 "adjustmentsMarkdown": adjustments_md,
-                "questionsMarkdown":   bullets(llm.questions_for_client, "None."),
+                "questionsMarkdown":   bullets(llm.questions_for_client, "None — no open questions for the client."),
             },
         )
 

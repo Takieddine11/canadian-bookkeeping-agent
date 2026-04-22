@@ -1,0 +1,154 @@
+{
+    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+    "type": "AdaptiveCard",
+    "version": "1.5",
+    "body": [
+        {
+            "type": "TextBlock",
+            "text": "Client profile — ${engagementId}",
+            "weight": "Bolder",
+            "size": "Large",
+            "wrap": true
+        },
+        {
+            "type": "TextBlock",
+            "text": "Tell me about this client once — it makes the audit drop false positives and skip redundant questions. Skip if you want; the audit still runs, it'll just ask for the missing pieces.",
+            "wrap": true,
+            "isSubtle": true,
+            "spacing": "None"
+        },
+        {
+            "type": "Input.Text",
+            "id": "legal_name",
+            "label": "Legal entity name",
+            "placeholder": "e.g. Cleany Québec Inc."
+        },
+        {
+            "type": "Input.Text",
+            "id": "industry",
+            "label": "Industry / what the business does",
+            "placeholder": "e.g. cleaning services, IT consulting, retail, construction"
+        },
+        {
+            "type": "Input.ChoiceSet",
+            "id": "province",
+            "label": "Primary province of operation",
+            "placeholder": "Select province",
+            "choices": [
+                { "title": "Quebec (QC)", "value": "QC" },
+                { "title": "Ontario (ON)", "value": "ON" },
+                { "title": "British Columbia (BC)", "value": "BC" },
+                { "title": "Alberta (AB)", "value": "AB" },
+                { "title": "Manitoba (MB)", "value": "MB" },
+                { "title": "Saskatchewan (SK)", "value": "SK" },
+                { "title": "Nova Scotia (NS)", "value": "NS" },
+                { "title": "New Brunswick (NB)", "value": "NB" },
+                { "title": "Newfoundland and Labrador (NL)", "value": "NL" },
+                { "title": "Prince Edward Island (PE)", "value": "PE" },
+                { "title": "Territories (YT/NT/NU)", "value": "TERR" }
+            ]
+        },
+        {
+            "type": "Input.Text",
+            "id": "fiscal_year_end",
+            "label": "Fiscal year end (MM-DD)",
+            "placeholder": "e.g. 12-31"
+        },
+        {
+            "type": "Input.ChoiceSet",
+            "id": "gst_hst_registered",
+            "label": "Registered for GST/HST?",
+            "style": "compact",
+            "choices": [
+                { "title": "Yes", "value": "yes" },
+                { "title": "No (below $30K threshold)", "value": "no" },
+                { "title": "Not sure", "value": "unknown" }
+            ]
+        },
+        {
+            "type": "Input.ChoiceSet",
+            "id": "qst_registered",
+            "label": "Registered for QST (Quebec)?",
+            "style": "compact",
+            "choices": [
+                { "title": "Yes", "value": "yes" },
+                { "title": "No / not applicable", "value": "no" },
+                { "title": "Not sure", "value": "unknown" }
+            ]
+        },
+        {
+            "type": "Input.ChoiceSet",
+            "id": "pst_registered",
+            "label": "Registered for PST (BC / MB / SK)?",
+            "style": "compact",
+            "choices": [
+                { "title": "Yes", "value": "yes" },
+                { "title": "No / not applicable", "value": "no" },
+                { "title": "Not sure", "value": "unknown" }
+            ]
+        },
+        {
+            "type": "Input.ChoiceSet",
+            "id": "quick_method_elected",
+            "label": "Quick Method of GST/HST election?",
+            "style": "compact",
+            "choices": [
+                { "title": "Yes, elected (remits reduced rate, no ITCs on ordinary expenses)", "value": "yes" },
+                { "title": "No, regular method", "value": "no" },
+                { "title": "Not sure", "value": "unknown" }
+            ]
+        },
+        {
+            "type": "Input.ChoiceSet",
+            "id": "has_inventory",
+            "label": "Does the business carry inventory?",
+            "style": "compact",
+            "choices": [
+                { "title": "Yes — materials or products on hand at year-end", "value": "yes" },
+                { "title": "No — pure service business, all consumed in-period", "value": "no" },
+                { "title": "Not sure", "value": "unknown" }
+            ]
+        },
+        {
+            "type": "Input.ChoiceSet",
+            "id": "has_payroll",
+            "label": "Does the business run payroll (T4 employees)?",
+            "style": "compact",
+            "choices": [
+                { "title": "Yes", "value": "yes" },
+                { "title": "No — dividends or subcontractors only", "value": "no" }
+            ]
+        },
+        {
+            "type": "Input.ChoiceSet",
+            "id": "prior_year_filed",
+            "label": "Prior year T2 / personal tax return filed?",
+            "style": "compact",
+            "choices": [
+                { "title": "Yes, filed and assessed", "value": "yes" },
+                { "title": "No / still outstanding", "value": "no" },
+                { "title": "Not sure", "value": "unknown" }
+            ]
+        },
+        {
+            "type": "Input.Text",
+            "id": "notes",
+            "label": "Anything else the auditor should know? (optional)",
+            "placeholder": "e.g. SR&ED claim pending, new owner this year, loan with bank covenants",
+            "isMultiline": true
+        }
+    ],
+    "actions": [
+        {
+            "type": "Action.Submit",
+            "title": "Save profile",
+            "style": "positive",
+            "data": { "verb": "save_client_profile", "engagementId": "${engagementId}" }
+        },
+        {
+            "type": "Action.Submit",
+            "title": "Skip — proceed without",
+            "data": { "verb": "skip_client_profile", "engagementId": "${engagementId}" }
+        }
+    ]
+}
