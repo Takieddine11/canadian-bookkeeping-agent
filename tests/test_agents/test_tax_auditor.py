@@ -231,7 +231,12 @@ def test_government_refund_credit_to_tax_account_flagged(
     assert f is not None
     assert f.severity == SEVERITY_ERROR
     assert "1,202.67" in f.detail or "1202.67" in f.detail
-    assert "flip" in f.proposed_fix.lower()
+    # The fix must explain the direction change in plain language the
+    # bookkeeper understands.
+    fix_lower = f.proposed_fix.lower()
+    assert "credit to debit" in fix_lower or "debit" in fix_lower
+    # Title must name the economic impact, not abstract terminology.
+    assert "overstated" in f.title.lower() or "backwards" in f.title.lower()
 
 
 def test_legitimate_tax_credit_on_sale_not_flagged(
