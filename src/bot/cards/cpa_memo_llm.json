@@ -5,28 +5,37 @@
     "body": [
         {
             "type": "TextBlock",
-            "text": "CPA Reviewer (LLM synthesis — Opus 4.7)",
+            "text": "Audit Review — ${company}",
             "weight": "Bolder",
             "size": "Large",
             "wrap": true
         },
         {
             "type": "TextBlock",
-            "text": "Engagement ${engagementId}  ·  ${company}  ·  ${period}",
+            "text": "Period ${period}  ·  Engagement ${engagementId}",
             "isSubtle": true,
             "spacing": "None",
             "wrap": true
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                { "title": "Journal",       "value": "${journalStats}" },
+                { "title": "Balance Sheet", "value": "${bsStats}" },
+                { "title": "P&L",           "value": "${pnlStats}" }
+            ]
         },
         {
             "type": "TextBlock",
             "text": "${executiveSummary}",
             "wrap": true,
             "spacing": "Medium",
-            "color": "${summaryColor}"
+            "color": "${summaryColor}",
+            "weight": "Bolder"
         },
         {
             "type": "TextBlock",
-            "text": "**Blocking issues**",
+            "text": "**Must resolve before sign-off**",
             "wrap": true,
             "weight": "Bolder",
             "spacing": "Medium"
@@ -38,7 +47,7 @@
         },
         {
             "type": "TextBlock",
-            "text": "**Judgment calls for the CPA**",
+            "text": "**Review and decide**",
             "wrap": true,
             "weight": "Bolder",
             "spacing": "Medium"

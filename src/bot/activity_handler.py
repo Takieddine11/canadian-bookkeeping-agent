@@ -417,23 +417,39 @@ class AuditBot(TeamsActivityHandler):
             return
 
         new_phase = advance_from_intake(self.store, engagement)
-        card = self._render_audit_started(engagement, new_phase)
-        await turn_context.send_activity(
-            MessageFactory.attachment(CardFactory.adaptive_card(card))
-        )
         log.info(
             "audit.started engagement=%s phase=%s",
             engagement.engagement_id, new_phase,
         )
 
+        # Brief "running" text so the bookkeeper sees the bot is working. A full
+        # memo card follows after all agents + LLM synthesis complete.
+        await turn_context.send_activity(MessageFactory.text(
+            f"🔍 Running audit on engagement `{engagement.engagement_id}` "
+            f"({engagement.period_description or 'period unspecified'}). "
+            "One moment — analyzing journal, BS, and P&L with four agents and "
+            "Opus 4.7 synthesis…"
+        ))
+
+        # Run all three deterministic agents SILENTLY — no per-agent cards. The
+        # findings all feed into Agent 4 (CPA Reviewer) which produces the single
+        # unified card the bookkeeper actually sees.
         collected: list[Finding] = []
-        # Agent 5 — Rollforward (pure-arithmetic BS/P&L ties)
-        collected.extend(await self._run_rollforward(turn_context, engagement))
-        # Agent 3 — Reconciliation (duplicates, missing accounts, period drift)
-        collected.extend(await self._run_reconciliation(turn_context, engagement))
-        # Agent 2 — Tax auditor (GST/HST/QST coding, vendor rate outliers)
-        collected.extend(await self._run_tax_auditor(turn_context, engagement))
-        # Agent 4 — CPA Reviewer (synthesis across everyone)
+        collected.extend(agent_rollforward.run(self.store, engagement))
+        collected.extend(agent_reconciliation.run(self.store, engagement))
+        collected.extend(agent_tax_auditor.run(self.store, engagement))
+        log.info(
+            "audit.findings_collected engagement=%s total=%d error=%d warn=%d info=%d ok=%d",
+            engagement.engagement_id, len(collected),
+            sum(1 for f in collected if f.severity == SEVERITY_ERROR),
+            sum(1 for f in collected if f.severity == SEVERITY_WARN),
+            sum(1 for f in collected if f.severity == "info"),
+            sum(1 for f in collected if f.severity == "ok"),
+        )
+
+        # Agent 4 — unified memo. Prefers Opus 4.7 synthesis (filters to 90%+
+        # confidence items, professional CPA prose). Falls back to the
+        # deterministic rollup if the LLM isn't available.
         await self._run_cpa_reviewer(turn_context, engagement, collected)
 
     async def _run_rollforward(
@@ -532,12 +548,16 @@ class AuditBot(TeamsActivityHandler):
         engagement: Engagement,
         all_findings: list[Finding],
     ) -> None:
-        """Synthesize earlier agents' findings and post the CPA review memo."""
+        """Post the unified CPA review memo.
+
+        Prefers Opus 4.7 synthesis — filters to 90%+ confidence items, professional
+        CPA prose. Falls back to the deterministic rollup card only when the LLM
+        isn't available (no API key, crash, rate limit, etc.).
+        """
         log.info(
             "agent.cpa_reviewer.start engagement=%s input_findings=%d",
             engagement.engagement_id, len(all_findings),
         )
-        # Pull company name from the already-parsed statements if available.
         company = self._infer_company(engagement)
         try:
             memo = agent_cpa_reviewer.build_memo(
@@ -549,23 +569,13 @@ class AuditBot(TeamsActivityHandler):
             )
             await turn_context.send_activity(
                 MessageFactory.text(
-                    "The CPA reviewer crashed aggregating findings. The per-agent "
-                    "cards above are still valid."
+                    "Audit ran but the review memo crashed while aggregating findings. "
+                    "Engagement is not closed; please re-run or contact admin."
                 )
             )
             return
 
-        card = self._render_cpa_memo(memo)
-        await turn_context.send_activity(
-            MessageFactory.attachment(CardFactory.adaptive_card(card))
-        )
-        log.info(
-            "agent.cpa_reviewer.done engagement=%s errors=%d warnings=%d sign_off_ready=%s",
-            engagement.engagement_id, memo.n_errors, memo.n_warnings, memo.sign_off_ready,
-        )
-
-        # Opus 4.7 synthesis on top — skipped silently if ANTHROPIC_API_KEY is missing
-        # or the API call fails. The deterministic memo above stands on its own.
+        # Preferred path: Opus 4.7 synthesis posts a single filtered card.
         llm_output = agent_cpa_reviewer.synthesize_memo_with_llm(
             memo, all_findings,
             bs_highlights=self._bs_highlights(engagement),
@@ -577,6 +587,26 @@ class AuditBot(TeamsActivityHandler):
                     CardFactory.adaptive_card(self._render_cpa_memo_llm(memo, llm_output))
                 )
             )
+            log.info(
+                "agent.cpa_reviewer.done engagement=%s source=llm "
+                "errors=%d warnings=%d sign_off_ready=%s",
+                engagement.engagement_id, memo.n_errors, memo.n_warnings,
+                memo.sign_off_ready,
+            )
+            return
+
+        # Fallback: deterministic rollup card when LLM is unavailable.
+        await turn_context.send_activity(
+            MessageFactory.attachment(
+                CardFactory.adaptive_card(self._render_cpa_memo(memo))
+            )
+        )
+        log.info(
+            "agent.cpa_reviewer.done engagement=%s source=deterministic "
+            "errors=%d warnings=%d sign_off_ready=%s",
+            engagement.engagement_id, memo.n_errors, memo.n_warnings,
+            memo.sign_off_ready,
+        )
 
     def _infer_company(self, engagement: Engagement) -> str | None:
         """Best-effort lookup: parse the BS/P&L/journal title rows, if present."""
@@ -645,7 +675,7 @@ class AuditBot(TeamsActivityHandler):
             f"• **DR** {a.debit_account}  **CR** {a.credit_account}  **${a.amount}**  — {a.description}"
             for a in llm.proposed_adjustments
         ]
-        adjustments_md = "\n\n".join(adj_lines) if adj_lines else "_No automated adjustments proposed._"
+        adjustments_md = "\n\n".join(adj_lines) if adj_lines else "_None — all corrections require client input (see questions below)._"
 
         return _substitute(
             json.loads(CPA_MEMO_LLM_CARD_PATH.read_text(encoding="utf-8")),
@@ -653,14 +683,65 @@ class AuditBot(TeamsActivityHandler):
                 "company":          memo.company,
                 "period":           memo.period,
                 "engagementId":     memo.engagement_id,
+                "journalStats":     self._journal_stats_line(memo.engagement_id),
+                "bsStats":          self._bs_stats_line(memo.engagement_id),
+                "pnlStats":         self._pnl_stats_line(memo.engagement_id),
                 "executiveSummary": llm.executive_summary,
                 "summaryColor":     color,
-                "blockingMarkdown":    bullets(llm.blocking_issues, "No blocking issues."),
-                "judgmentMarkdown":    bullets(llm.judgment_notes, "No judgment calls flagged."),
+                "blockingMarkdown":    bullets(llm.blocking_issues, "None."),
+                "judgmentMarkdown":    bullets(llm.judgment_notes, "None."),
                 "adjustmentsMarkdown": adjustments_md,
-                "questionsMarkdown":   bullets(llm.questions_for_client, "No open questions."),
+                "questionsMarkdown":   bullets(llm.questions_for_client, "None."),
             },
         )
+
+    def _journal_stats_line(self, engagement_id: str) -> str:
+        """One-line journal summary for the memo-card header."""
+        docs = self.store.list_documents(engagement_id)
+        doc = next((d for d in docs if d.doc_type == DOC_JOURNAL), None)
+        if doc is None:
+            return "—"
+        try:
+            r = parse_journal_csv(Path(doc.file_path))
+        except Exception:
+            return "(parse failed)"
+        total_debit = sum((l.debit for l in r.lines), _ZERO)
+        balanced = "✓" if not r.unbalanced_groups() else f"⚠ {len(r.unbalanced_groups())} unbalanced"
+        return (
+            f"{len(r.groups())} entries / {len(r.lines)} lines, "
+            f"${total_debit:,.2f} activity, trial balance {balanced}"
+        )
+
+    def _bs_stats_line(self, engagement_id: str) -> str:
+        docs = self.store.list_documents(engagement_id)
+        doc = next((d for d in docs if d.doc_type == DOC_BALANCE_SHEET), None)
+        if doc is None:
+            return "—"
+        try:
+            bs = parse_balance_sheet(Path(doc.file_path))
+        except Exception:
+            return "(parse failed)"
+        ta = bs.amount_of("Total Assets") or _ZERO
+        tle = bs.amount_of("Total Liabilities and Equity") or _ZERO
+        identity = "✓" if ta == tle else f"⚠ ${ta:,.2f} vs ${tle:,.2f}"
+        basis = f" ({bs.basis})" if bs.basis else ""
+        return f"Total Assets ${ta:,.2f}, identity {identity}{basis}"
+
+    def _pnl_stats_line(self, engagement_id: str) -> str:
+        docs = self.store.list_documents(engagement_id)
+        doc = next((d for d in docs if d.doc_type == DOC_PNL), None)
+        if doc is None:
+            return "—"
+        try:
+            pl = parse_pnl(Path(doc.file_path))
+        except Exception:
+            return "(parse failed)"
+        income = pl.amount_of("Total Income") or _ZERO
+        profit = pl.amount_of("PROFIT")
+        if profit is None:
+            return f"Income ${income:,.2f}"
+        margin = (profit / income * 100) if income > _ZERO else _ZERO
+        return f"Income ${income:,.2f}, Profit ${profit:,.2f} ({margin:.1f}%)"
 
     def _render_cpa_memo(self, memo: "agent_cpa_reviewer.Memo") -> dict[str, Any]:
         def fmt(lines: list[str], empty: str) -> str:
