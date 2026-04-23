@@ -237,6 +237,7 @@ def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
     findings.extend(_prior_year_noise_check(remittances))
     findings.extend(_bs_liability_reconciliation(remittances, bs_doc))
     findings.extend(_unclassified_payment_check(remittances))
+    findings.extend(_single_leg_sales_tax_remittance_check(remittances, report))
 
     log.info(
         "government_remittance.done engagement=%s findings=%d error=%d warn=%d",
@@ -633,5 +634,85 @@ def _unclassified_payment_check(remittances: list[_Remittance]) -> list[Finding]
             "remittance', 'CPP/EI/fed tax DAS for <month>', 'T2 installment "
             "#3 FY2025'), (c) verify the entry's offsetting account is the "
             "correct liability, not an expense."
+        ),
+    )]
+
+
+def _single_leg_sales_tax_remittance_check(
+    remittances: list[_Remittance],
+    report: JournalReport,
+) -> list[Finding]:
+    """For Quebec filers, a GST+QST return payment of any material size should
+    split the debit across GST/HST Payable AND QST Payable sub-accounts in
+    proportion to the return amounts. A single-leg remittance (all of it to
+    one sub-account) is a classification error even when the total amount is
+    correct — it distorts the per-sub-account reconciliation with each return.
+    """
+    suspects: list[_Remittance] = []
+    by_group: dict[str, list[JournalLine]] = defaultdict(list)
+    for line in report.lines:
+        by_group[line.group_id].append(line)
+
+    for r in remittances:
+        if r.category not in ("gst_hst_remittance", "qst_remittance",
+                              "combined_sales_tax_remittance"):
+            continue
+        if r.amount < Decimal("500"):
+            continue  # small amounts unlikely to be full-return remittances
+        group_lines = by_group.get(r.line.group_id, [])
+        # Count how many distinct sales-tax sub-accounts were touched on the
+        # non-cash side of the entry.
+        tax_accounts_hit: set[str] = set()
+        for line in group_lines:
+            acct = (line.account or "").lower()
+            if _is_cash_account(acct):
+                continue
+            if "gst" in acct or "hst" in acct or "tps" in acct or "tvh" in acct:
+                tax_accounts_hit.add("gst_side")
+            if "qst" in acct or "tvq" in acct:
+                tax_accounts_hit.add("qst_side")
+        # A combined return should touch both. If only one side is hit for a
+        # material Quebec-filer remittance, flag.
+        if len(tax_accounts_hit) == 1:
+            suspects.append(r)
+
+    if not suspects:
+        return []
+
+    total = sum((r.amount for r in suspects), _ZERO)
+    blocks: list[str] = []
+    for r in suspects:
+        blocks.append(
+            f"• {r.line.txn_date.isoformat()}  ${r.amount:,.2f}  "
+            f"**{r.line.name}**  (account touched: {r.line.account})\n"
+            f"  memo: {(r.line.description or '').strip()[:120]}"
+        )
+
+    return [Finding(
+        agent=AGENT, check="single_leg_sales_tax_remittance", severity=SEVERITY_WARN,
+        title=f"{len(suspects)} sales-tax remittance(s) posted to ONE sub-account only — ${total:,.2f}",
+        detail=(
+            "A Quebec GST+QST return collects both federal (5% GST) and "
+            "provincial (9.975% QST) on the same taxable base, typically in "
+            "roughly a 1:2 ratio. The payment to Revenu Québec should split "
+            "the debit between the GST/HST Payable and the QST Payable "
+            "sub-accounts so each return can be reconciled against its own "
+            "sub-account activity. A single-leg remittance posting the entire "
+            "amount to ONE sub-account hides which portion of the liability "
+            "was actually cleared — even when the total amount is correct.\n\n"
+            "This is DISTINCT from the BS-presentation question: a single "
+            "combined 'GST/QST Payable' line on the BS is normal QBO "
+            "behavior and is not flagged. The issue is the JOURNAL entry "
+            "moving the remittance through one sub-account.\n\n"
+            "Remittances to split:\n\n"
+            + "\n\n".join(blocks)
+        ),
+        proposed_fix=(
+            "For each payment above: (a) pull the underlying filed return, "
+            "(b) identify the GST portion and the QST portion, "
+            "(c) re-book the entry as: Dr GST/HST Payable <gst portion> / "
+            "Dr QST Payable <qst portion> / Cr Cash <total>. The total amount "
+            "paid stays the same; the sub-account balances reconcile to the "
+            "returns."
         ),
     )]

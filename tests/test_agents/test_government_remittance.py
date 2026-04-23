@@ -281,3 +281,54 @@ def test_french_payee_quebec_classified_as_qst(
     summary = _find(findings, "classification_summary")
     assert summary is not None
     assert "QST remittance" in summary.detail
+
+
+def test_single_leg_sales_tax_remittance_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """A material QC sales-tax remittance posted to ONE sub-account (all to
+    GST/HST Payable, nothing to QST Payable) must be flagged for splitting."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, [
+        # $8,200 to Revenu Quebec for a Q3 GST+QST return, posted entirely to
+        # GST/HST Payable — no QST Payable leg. This is the Lefebvre pattern.
+        ("1", "15/10/2025", "Expense", "", "Revenu Quebec",
+         "GST/QST Q3 2025 return payment",
+         "GST/HST Payable", "8200.00", ""),
+        ("1", "15/10/2025", "Expense", "", "Revenu Quebec", "",
+         "BMO Chequing", "", "8200.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_gov(store, eng)
+    single = _find(findings, "single_leg_sales_tax_remittance")
+    assert single is not None
+    assert single.severity == SEVERITY_WARN
+    assert "8,200" in single.title
+    # Must include date + vendor + amount per-item so bookkeeper can search QBO.
+    assert "2025-10-15" in single.detail
+    assert "Revenu Quebec" in single.detail
+
+
+def test_sales_tax_remittance_with_both_legs_not_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """When a remittance correctly splits across GST/HST Payable AND QST
+    Payable sub-accounts, it must NOT be flagged."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, [
+        # Properly split: GST portion + QST portion.
+        ("1", "15/10/2025", "Expense", "", "Revenu Quebec",
+         "GST/QST Q3 2025 return — GST portion",
+         "GST/HST Payable", "2700.00", ""),
+        ("1", "15/10/2025", "Expense", "", "Revenu Quebec",
+         "GST/QST Q3 2025 return — QST portion",
+         "QST Payable", "5500.00", ""),
+        ("1", "15/10/2025", "Expense", "", "Revenu Quebec", "",
+         "BMO Chequing", "", "8200.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_gov(store, eng)
+    single = _find(findings, "single_leg_sales_tax_remittance")
+    assert single is None  # correctly split → no finding

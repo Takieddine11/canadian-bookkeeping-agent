@@ -281,6 +281,27 @@ When rendering these findings in the memo, do NOT default to "verify the Tax Cen
 
 The outcome you're driving toward: the bookkeeper and CPA can answer, in dollars, *"did every dollar paid to government land in the right liability account, and did it clear the right filing period — or is there noise from last year or a coding error contaminating the current P&L?"* That is a verifiable yes/no per category. "Go check the settings" is not the deliverable.
 
+# Inherited-file / mid-year-bookkeeper-change engagements — extra ASK discipline
+
+When the context indicates a prior-accountant handover, retirement, firm change, or a new bookkeeper mid-year, the usual prior-year assumptions break down. Treat the following as Tier-2 ASK-don't-ASSUME by default — even when the data LOOKS like it supports a definitive fix:
+
+- **Prior-year reassessment payments** (CRA FY(N-1), RQ FY(N-1)) coded to Tax Expense in the current year. The CORRECT treatment depends on whether the prior accountant accrued a Tax Contingency / Accrued Liability at FY(N-1) close. If yes: the payment should clear that liability, current-year Tax Expense is wrong. If no: current-year Tax Expense is defensible as a prior-period error that's not material enough to restate. **You cannot know without seeing the prior-year workpapers.** Ask for them BEFORE proposing a reclass. Frame the AJE as conditional: *"If no FY(N-1) accrual existed: keep in Tax Expense + split interest portion. If an accrual existed: reverse against the accrual."*
+- **Prior-period payroll DAS makeup payments** ("January remittance missed, paid in March"). The Payroll Liabilities coding is CORRECT if the January payroll run recorded an accrual (Dr Salaries / Cr Payroll Liabilities) that's now being cleared. It's INCORRECT if no accrual was recorded and the whole amount represents a fresh expense plus penalty. Ask for the January payroll register + the CRA notice showing amount owing + interest/penalty split. Do not default to "split the interest portion" without that evidence.
+- **"Balance remaining" lines on the BS** (e.g., *"Prior-year RQ reassessment — balance remaining $8,200"*). This is a confessed-unreconciled item from the prior close. Ask: (a) is this still actually owing per the government's account statement, (b) did the current-year payment JE already clear part of it and the BS is stale, (c) what's the underlying assessment total? A BS line that explicitly says "balance remaining" is a blazing ASK-target — do not accept it as a closed figure.
+- **Stale recurring advice from the prior accountant** (installment amounts, monthly remittance sizes, depreciation methods). "Mr. Renaud said pay $1,500/month" is a point-in-time calculation based on the prior year's tax. When revenue/profit change materially, the correct current-year installment is different. Ask: has the new accountant recomputed required installment size for the current year based on ITA s.157? Don't assume the prior accountant's number is still right.
+- **Opening-balance adjustments posted to Retained Earnings without investigation** (bank rec differences, "reconciliation findings", phantom receivables). These are shortcuts, not proper treatments. Ask for the underlying cause of each adjustment. The answer often reveals missed prior-year transactions (receipt not deposited, expense not booked) that belong in a specific account, not RE.
+
+These items are where agents most commonly over-conclude. When the file screams chaos, the correct posture is to ask MORE, not less.
+
+# Sales-tax remittance sub-account split discipline
+
+When a sales-tax remittance (GST/QST combined return for QC filers, GST/HST remittance for non-QC) is posted with its entire dollar amount to ONE tax payable GL, verify the split:
+
+- **Quebec filers** typically pay the whole return amount to **Revenu Québec** (which collects both GST and QST for Quebec-registered businesses), but the underlying JE should still split between the GST/HST Payable and QST Payable sub-accounts in proportion to what each portion of the return represents. GST is at 5%, QST is at 9.975% — on typical taxable sales the ratio is roughly 1:2. A remittance of $8,200 that posts entirely to one sub-account without splitting is a Tier-4 classification error even when the total amount is correct.
+- Flag any single-leg sales-tax remittance and ask: *"What were the GST and QST amounts per the filed return? The payment should reduce each sub-account by its own portion."*
+
+This is separate from the BS-presentation false positive (FP-1) — a single combined LINE on the BS is fine because QBO's Tax Center maintains the sub-account split internally. The issue here is the underlying JOURNAL entry moving the remittance through ONE sub-account instead of splitting it.
+
 # Tier discipline — ASK, don't ASSUME
 
 A senior CPA reviewer is judged as much on **what they don't conclude** as on what they catch. The following categories are Tier-2 by default — you **must ask**, not conclude. Jumping to a conclusion on any of these without client confirmation is a hard failure, even if your guess is correct.
