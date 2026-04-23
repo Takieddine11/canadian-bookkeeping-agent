@@ -54,6 +54,7 @@ from src.parsers.journal import JournalLine, JournalReport, parse_journal_csv
 from src.store.engagement_db import (
     DOC_BALANCE_SHEET,
     DOC_JOURNAL,
+    DOC_PRIOR_YEAR_BS,
     Engagement,
     EngagementStore,
 )
@@ -235,7 +236,8 @@ def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
     findings.extend(_classification_summary(remittances))
     findings.extend(_expense_miscoding_check(remittances))
     findings.extend(_prior_year_noise_check(remittances))
-    findings.extend(_bs_liability_reconciliation(remittances, bs_doc))
+    prior_bs_doc = store.latest_document(engagement.engagement_id, DOC_PRIOR_YEAR_BS)
+    findings.extend(_bs_liability_reconciliation(remittances, bs_doc, prior_bs_doc))
     findings.extend(_unclassified_payment_check(remittances))
     findings.extend(_single_leg_sales_tax_remittance_check(remittances, report))
 
@@ -479,13 +481,56 @@ def _prior_year_noise_check(remittances: list[_Remittance]) -> list[Finding]:
     )]
 
 
+@dataclass(frozen=True)
+class _LiabilityBalances:
+    gst_qst_payable: Decimal
+    gst_qst_suspense: Decimal
+    payroll_liab: Decimal
+    corp_tax_payable: Decimal
+
+
+def _extract_liability_balances(bs) -> _LiabilityBalances:  # type: ignore[no-untyped-def]
+    """Pull the four liability categories we reconcile remittances against
+    from either a current-year or prior-year BS. Used symmetrically for both
+    ends of the three-way tie."""
+    gst_qst_payable = bs.amount_of_any(*L.GST_HST_PAYABLE) or _ZERO
+    gst_qst_suspense = bs.amount_of_any(*L.GST_HST_SUSPENSE) or _ZERO
+    payroll_liab = _ZERO
+    corp_tax_payable = _ZERO
+    for line in bs.lines:
+        n = (line.name or "").lower()
+        if line.amount is None:
+            continue
+        if any(t in n for t in ("payroll liabilit", "das ", "source deduct")):
+            payroll_liab += line.amount
+        if any(t in n for t in ("corporate income tax payable",
+                                "corporate tax payable",
+                                "income tax payable", "taxes payable",
+                                "impôts à payer", "impots a payer")):
+            corp_tax_payable += line.amount
+    return _LiabilityBalances(
+        gst_qst_payable=gst_qst_payable,
+        gst_qst_suspense=gst_qst_suspense,
+        payroll_liab=payroll_liab,
+        corp_tax_payable=corp_tax_payable,
+    )
+
+
 def _bs_liability_reconciliation(
     remittances: list[_Remittance],
     bs_doc,  # type: ignore[no-untyped-def]
+    prior_bs_doc=None,  # type: ignore[no-untyped-def]
 ) -> list[Finding]:
     """Cross-check total paid per category against the BS closing liability
-    balances. We cannot close the loop without the prior-year BS (to get the
-    opening balance), but we can still surface the current state."""
+    balances. When a prior-year BS is also available, complete the full
+    three-way tie per category:
+
+        opening liability + current-year activity − current-year paid = closing liability
+
+    and report the residual gap per category. The gap, when non-zero, is the
+    amount of current-year activity (accrual) the journal shows, OR the
+    amount of prior-year noise polluting the current P&L.
+    """
     if bs_doc is None:
         return [Finding(
             agent=AGENT, check="bs_reconciliation", severity=SEVERITY_INFO,
@@ -504,27 +549,26 @@ def _bs_liability_reconciliation(
             detail=f"{type(exc).__name__}: {exc}",
         )]
 
+    closing = _extract_liability_balances(bs)
+
+    # If a prior-year BS was uploaded, try to parse it too. It's not required;
+    # a failure here doesn't block the current-year reconciliation.
+    opening: _LiabilityBalances | None = None
+    prior_bs_parse_error: str | None = None
+    if prior_bs_doc is not None:
+        try:
+            prior_bs = parse_balance_sheet(Path(prior_bs_doc.file_path))
+            opening = _extract_liability_balances(prior_bs)
+        except Exception as exc:
+            log.warning(
+                "government_remittance.prior_bs_parse_failed path=%s error=%s",
+                prior_bs_doc.file_path, exc,
+            )
+            prior_bs_parse_error = f"{type(exc).__name__}: {exc}"
+
     totals: dict[str, Decimal] = defaultdict(lambda: _ZERO)
     for r in remittances:
         totals[r.category] += r.amount
-
-    # Best-effort lookups against known BS lines.
-    gst_qst_payable = bs.amount_of_any(*L.GST_HST_PAYABLE) or _ZERO
-    gst_qst_suspense = bs.amount_of_any(*L.GST_HST_SUSPENSE) or _ZERO
-    # Payroll + corporate-tax labels aren't in labels.py — scan BS lines directly.
-    payroll_liab = _ZERO
-    corp_tax_payable = _ZERO
-    for line in bs.lines:
-        n = (line.name or "").lower()
-        if line.amount is None:
-            continue
-        if any(t in n for t in ("payroll liabilit", "das ", "source deduct")):
-            payroll_liab += line.amount
-        if any(t in n for t in ("corporate income tax payable",
-                                "corporate tax payable",
-                                "income tax payable", "taxes payable",
-                                "impôts à payer", "impots a payer")):
-            corp_tax_payable += line.amount
 
     sales_tax_paid = (totals["gst_hst_remittance"]
                       + totals["qst_remittance"]
@@ -532,21 +576,85 @@ def _bs_liability_reconciliation(
     payroll_paid = totals["payroll_das"]
     corp_tax_paid = totals["corporate_tax"]
 
-    lines_out = [
-        "This is a current-state snapshot. The reconciliation is only complete "
-        "once the prior-year closing BS is available — then:",
-        "  opening liability + current-period accruals − payments made = closing liability",
-        "",
-        "What we observed in the current period:",
-        "",
-        f"• **Payroll** — paid ${payroll_paid:,.2f} to CRA/RQ classified as "
-        f"source deductions. BS Payroll Liabilities at year-end: ${payroll_liab:,.2f}.",
-        f"• **Sales tax (GST + QST combined)** — paid ${sales_tax_paid:,.2f}. "
-        f"BS GST/HST Payable (net) at year-end: ${gst_qst_payable:,.2f}; "
-        f"Suspense: ${gst_qst_suspense:,.2f}.",
-        f"• **Corporate income tax** — paid ${corp_tax_paid:,.2f} in installments. "
-        f"BS Corporate Tax Payable at year-end: ${corp_tax_payable:,.2f}.",
-    ]
+    # --- Build the detail block ---
+    if opening is not None:
+        # Full three-way tie is possible. Implied current-year activity for
+        # each category is: closing − opening + paid. If that number matches
+        # what the P&L would show for the category (e.g. GST/QST collected
+        # net of ITC, gross payroll withholdings, current-year tax accrual),
+        # the three-way tie holds. We surface the computed activity here so
+        # the CPA can compare it against the P&L signal.
+        def activity(closing_val: Decimal, opening_val: Decimal,
+                     paid: Decimal) -> Decimal:
+            return closing_val - opening_val + paid
+
+        sales_activity = activity(
+            closing.gst_qst_payable, opening.gst_qst_payable, sales_tax_paid)
+        payroll_activity = activity(
+            closing.payroll_liab, opening.payroll_liab, payroll_paid)
+        corp_activity = activity(
+            closing.corp_tax_payable, opening.corp_tax_payable, corp_tax_paid)
+
+        lines_out = [
+            "**Three-way reconciliation complete.** Using the uploaded prior-year BS "
+            "as the opening balance per category:",
+            "",
+            "  opening liability + current-year activity − current-year paid = closing liability",
+            "  → current-year activity = closing − opening + paid",
+            "",
+            "**Payroll DAS:**",
+            f"  opening ${opening.payroll_liab:,.2f} + activity **${payroll_activity:,.2f}** "
+            f"− paid ${payroll_paid:,.2f} = closing ${closing.payroll_liab:,.2f}",
+            f"  → the journal should show ~${payroll_activity:,.2f} of gross "
+            f"payroll withholdings accrued during the year.",
+            "",
+            "**Sales tax (GST + QST combined):**",
+            f"  opening ${opening.gst_qst_payable:,.2f} + activity **${sales_activity:,.2f}** "
+            f"− paid ${sales_tax_paid:,.2f} = closing ${closing.gst_qst_payable:,.2f}",
+            f"  → the journal should show ~${sales_activity:,.2f} of net GST+QST "
+            f"accrued (tax collected on sales minus ITC/ITR on purchases).",
+            "",
+            "**Corporate income tax:**",
+            f"  opening ${opening.corp_tax_payable:,.2f} + activity **${corp_activity:,.2f}** "
+            f"− paid ${corp_tax_paid:,.2f} = closing ${closing.corp_tax_payable:,.2f}",
+            f"  → the current-year tax accrual implied by the BS+cash movement is "
+            f"${corp_activity:,.2f}. Compare against the year-end accrual JE.",
+        ]
+    else:
+        # Snapshot-only — can't close the three-way tie.
+        lines_out = [
+            "**Current-state snapshot only** — the reconciliation is only complete "
+            "once a prior-year closing BS is uploaded. Please send the prior-year BS "
+            "in any format (QBO export, prior accountant PDF, scan); I'll complete "
+            "the tie-out as soon as it arrives.",
+            "",
+            "  With prior-year BS: opening liability + activity − paid = closing liability",
+            "  Without it: I can only report the current-year leg.",
+            "",
+            "What I can report from the current-year BS + remittances:",
+            "",
+            f"• **Payroll** — paid ${payroll_paid:,.2f} to CRA/RQ classified as "
+            f"source deductions. BS Payroll Liabilities at year-end: ${closing.payroll_liab:,.2f}.",
+            f"• **Sales tax (GST + QST combined)** — paid ${sales_tax_paid:,.2f}. "
+            f"BS GST/HST Payable (net) at year-end: ${closing.gst_qst_payable:,.2f}; "
+            f"Suspense: ${closing.gst_qst_suspense:,.2f}.",
+            f"• **Corporate income tax** — paid ${corp_tax_paid:,.2f} in installments. "
+            f"BS Corporate Tax Payable at year-end: ${closing.corp_tax_payable:,.2f}.",
+        ]
+        if prior_bs_parse_error:
+            lines_out.insert(1, (
+                f"ℹ A prior-year BS WAS uploaded but I couldn't parse it "
+                f"({prior_bs_parse_error}). Please either re-upload in a "
+                "different format (xlsx preferred) or paste the four opening "
+                "balances directly (Payroll Liabilities, GST/QST Payable, "
+                "Corporate Income Tax Payable, Retained Earnings)."
+            ))
+
+    # Rebind the local names the anomaly block below reads.
+    gst_qst_payable = closing.gst_qst_payable
+    gst_qst_suspense = closing.gst_qst_suspense
+    payroll_liab = closing.payroll_liab
+    corp_tax_payable = closing.corp_tax_payable
 
     # Heuristic flags worth calling out. We're deliberately conservative.
     anomalies: list[str] = []

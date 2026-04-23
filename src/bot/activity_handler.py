@@ -64,6 +64,7 @@ from src.store.engagement_db import (
     DOC_BANK_STATEMENT,
     DOC_JOURNAL,
     DOC_PNL,
+    DOC_PRIOR_YEAR_BS,
     MODE_CLEANUP,
     PHASE_DELIVERED,
     Engagement,
@@ -94,6 +95,7 @@ _DOC_LABELS = {
     DOC_BALANCE_SHEET: "Balance Sheet",
     DOC_PNL: "P&L",
     DOC_BANK_STATEMENT: "Bank Statements",
+    DOC_PRIOR_YEAR_BS: "Prior-Year Balance Sheet",
 }
 
 
@@ -1298,9 +1300,34 @@ class AuditBot(TeamsActivityHandler):
         )
 
 
+_PRIOR_YEAR_MARKERS = (
+    # Explicit "prior year" / "year N-1" phrasing
+    "prior year", "prior_year", "prior-year", "prioryear",
+    "previous year", "previous_year", "previousyear",
+    "opening bs", "opening balance sheet", "opening_bs",
+    "prev bs", "prev_bs",
+    # French
+    "année précédente", "annee precedente",
+    "exercice précédent", "exercice precedent",
+    "bilan d'ouverture", "bilan douverture",
+    "ouverture",
+)
+
+
+def _looks_like_prior_year(filename: str) -> bool:
+    """True if the filename explicitly flags this as a prior-year document.
+    Explicit year markers (e.g. '2023', 'FY2023') alone are ambiguous — they
+    could be the current-year report for a Dec 31 2023 year-end. Only an
+    explicit 'prior'/'previous'/'opening' keyword is a safe signal."""
+    n = (filename or "").lower()
+    return any(m in n for m in _PRIOR_YEAR_MARKERS)
+
+
 def _classify_doc_type(filename: str | None) -> str:
     """Classify a QBO export by filename. Accepts English + French names;
-    many Canadian clients (esp. Quebec) use French QBO labels."""
+    many Canadian clients (esp. Quebec) use French QBO labels. Also detects
+    prior-year Balance Sheets (any format) via explicit 'prior year' /
+    'opening' / 'exercice précédent' keywords in the filename."""
     name = (filename or "").lower()
     if any(k in name for k in (
         # English
@@ -1309,15 +1336,18 @@ def _classify_doc_type(filename: str | None) -> str:
         "grand livre", "grand_livre", "grand-livre",
     )):
         return DOC_JOURNAL
-    if any(k in name for k in (
-        # English
+    # Prior-year BS check runs BEFORE the regular BS check so that a filename
+    # like "Prior Year Balance Sheet 2024.pdf" classifies as DOC_PRIOR_YEAR_BS,
+    # not DOC_BALANCE_SHEET.
+    is_bs_like = any(k in name for k in (
         "balance", "bs_", " bs.", "_bs.", "balancesheet",
-        # French — "Bilan" is the common name; the long form is
-        # "État de (la) situation financière"
         "bilan",
         "situation financière", "situation financiere",
         "état de situation", "etat de situation",
-    )):
+    ))
+    if is_bs_like and _looks_like_prior_year(name):
+        return DOC_PRIOR_YEAR_BS
+    if is_bs_like:
         return DOC_BALANCE_SHEET
     if any(k in name for k in (
         # English

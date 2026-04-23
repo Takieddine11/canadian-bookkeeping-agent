@@ -43,6 +43,11 @@ DOC_BALANCE_SHEET = "balance_sheet"
 DOC_PNL = "pnl"
 DOC_BANK_STATEMENT = "bank_statement"
 DOC_VENDOR_BILL = "vendor_bill"
+# Prior-year closing BS (FY N-1) — critical for three-way-tie reconciliation
+# (opening liability + current-year accrual − current-year paid = closing).
+# Accepted in ANY format (QBO export, prior accountant summary PDF, scan)
+# because the prior accountant often issues it outside of QBO.
+DOC_PRIOR_YEAR_BS = "prior_year_bs"
 
 CONV_PERSONAL = "personal"
 CONV_CHANNEL = "channel"

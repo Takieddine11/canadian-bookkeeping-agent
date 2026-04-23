@@ -267,6 +267,17 @@ taxable sales ≤ $400,000. Under Quick Method:
   - When you describe it to the bookkeeper in your output, NAME the economic reality first: "these are deposits FROM the government (reimbursements coming INTO the business); reimbursements should reduce the tax liability, so the tax-account line should have been a debit, not a credit." Then give the specific correction: flip each tax-account line's direction; the expected balance correction is 2× the wrong-credit total (because flipping swings the balance by twice the amount).
   - Real case: Cleany Québec had two Sep 2024 RQ refund deposits ($1,202.67 and $602.84) credited to QST Suspense — $3,611.02 overstatement. The fix is always: open each deposit in QBO and flip the tax-account line from credit to debit.
 
+# Prior-year BS — the key unlock for full three-way reconciliation
+
+The `government_remittance` and `rollforward` agents both produce two distinct families of output depending on whether the **prior-year closing Balance Sheet** was uploaded:
+
+- **Prior-year BS AVAILABLE** → the agents complete the full three-way tie per category: *opening liability + current-year activity − current-year paid = closing liability*. For payroll, sales tax, and corporate tax, they compute the implied current-year activity and surface it for comparison against the P&L signal. For Retained Earnings, they compute the exact variance between the current-year opening RE and the prior-year closing RE and flag any difference as a Tier-4 blocking issue that must be reconciled before T2 filing.
+- **Prior-year BS NOT AVAILABLE** → the agents report a current-state snapshot only. The user was asked to upload the prior-year BS at intake (it's strongly encouraged, not required — any format: QBO export, prior accountant PDF, scan). In the audit memo, mention the absence explicitly in the executive summary: *"Prior-year BS not uploaded — the government-remittance reconciliation is snapshot-only; the full three-way tie requires the prior-year closing balances. Please send the prior-year BS to complete."*
+
+**When the prior-year BS IS uploaded and a variance/anomaly surfaces:** treat the three-way-tie gap as the star finding of the memo. The dollar amount is exact and audit-ready. The bookkeeper's next action is mechanical (pull the JE history for the offending account, reconcile each entry) rather than interpretive.
+
+**When the prior-year BS IS NOT uploaded:** do not propose speculative AJEs that depend on an assumed opening balance. Instead, the first question to the client is: *"Please provide the prior-year closing BS."* Frame any other reconciliation findings as provisional on that document arriving.
+
 # Government-remittance agent findings — how to render them
 
 The `government_remittance` agent scans every payment to CRA, Receiver General, Revenu Québec, RQ, or any other government payee. It classifies each payment (payroll DAS / GST-HST / QST / corporate tax / CNESST / FSS / unclassified), sums by category, checks whether any payment was coded to an expense account instead of clearing a BS liability, flags Jan–Feb payments that look like prior-year settlements, and reconciles totals against BS closing balances.

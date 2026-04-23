@@ -19,8 +19,14 @@
         },
         {
             "type": "TextBlock",
-            "text": "Drag-and-drop the four documents below into this chat (or use the paperclip icon). I'll confirm each one as it arrives.",
+            "text": "Drag-and-drop the documents below into this chat (or use the paperclip icon). I'll confirm each one as it arrives.",
             "wrap": true,
+            "spacing": "Medium"
+        },
+        {
+            "type": "TextBlock",
+            "text": "Required (current year):",
+            "weight": "Bolder",
             "spacing": "Medium"
         },
         {
@@ -31,6 +37,25 @@
                 { "title": "3. Profit & Loss", "value": "For the period, with prior-period comparative" },
                 { "title": "4. Bank Statements", "value": "All bank + credit card accounts, full period" }
             ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "Strongly encouraged (prior year):",
+            "weight": "Bolder",
+            "spacing": "Medium"
+        },
+        {
+            "type": "FactSet",
+            "facts": [
+                { "title": "5. Prior-Year BS", "value": "Closing balance sheet for the prior year — any format (QBO export, prior accountant's summary PDF, scan). Name the file with 'Prior Year' or 'Opening' so I can identify it." }
+            ]
+        },
+        {
+            "type": "TextBlock",
+            "text": "Why the prior-year BS matters: it lets me complete the three-way reconciliation (opening liability + current-year accrual − payments = closing liability) on sales tax, payroll DAS, and corporate tax. Without it, I can only report a current-state snapshot — I can't confirm whether prior-year liabilities were cleared cleanly or if prior-year noise is polluting the current-year P&L.",
+            "isSubtle": true,
+            "wrap": true,
+            "spacing": "Small"
         },
         {
             "type": "TextBlock",

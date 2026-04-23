@@ -14,6 +14,7 @@ from src.store.engagement_db import (
     DOC_BANK_STATEMENT,
     DOC_JOURNAL,
     DOC_PNL,
+    DOC_PRIOR_YEAR_BS,
     PHASE_CPA_REVIEW,
     PHASE_DELIVERED,
     PHASE_INTAKE,
@@ -27,7 +28,12 @@ from src.store.engagement_db import (
 log = logging.getLogger(__name__)
 
 CORE_INTAKE_DOCS = (DOC_JOURNAL, DOC_BALANCE_SHEET, DOC_PNL)
-OPTIONAL_INTAKE_DOCS = (DOC_BANK_STATEMENT,)
+# Prior-year BS is "strongly-encouraged optional" — not required to start
+# the audit, but without it the government_remittance agent can only report
+# a current-state snapshot instead of a full three-way tie, and the
+# rollforward agent can't reconcile opening RE directly. We ask for it up
+# front and flag its absence in the audit memo.
+OPTIONAL_INTAKE_DOCS = (DOC_BANK_STATEMENT, DOC_PRIOR_YEAR_BS)
 
 # Phrases the bookkeeper can type to signal "I've uploaded everything I'm going to,
 # run the audit now". Matched case-insensitively on the full stripped message.

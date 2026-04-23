@@ -254,3 +254,81 @@ def test_bank_balances_extracted(engagement_with_docs, store: EngagementStore) -
     assert banks.severity == SEVERITY_INFO
     assert "Scotia Checking" in banks.detail
     assert "Scotia Savings" in banks.detail
+
+
+def test_re_rollforward_tie_ok_when_prior_matches(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """When the prior-year BS closing RE matches the current-year opening RE,
+    the new re_rollforward_tie finding reports OK."""
+    from src.store.engagement_db import DOC_PRIOR_YEAR_BS
+    eng = store.create_engagement("conv-1", CONV_PERSONAL, period_description="2025")
+    bs = tmp_path / "bs.xlsx"
+    pl = tmp_path / "pnl.xlsx"
+    prior = tmp_path / "prior_bs.xlsx"
+    # Current-year opening RE = 70,000.
+    _balance_sheet(
+        bs, assets=100000, liab=20000, equity=80000, profit=10000,
+        re=70000, gst_payable=5000,
+    )
+    _pnl(pl, income=200000, cogs=0, expenses=190000, profit=10000)
+    # Prior-year closing RE = 70,000 — ties exactly.
+    _balance_sheet(
+        prior, assets=80000, liab=10000, equity=70000, profit=0,
+        re=70000, gst_payable=0,
+    )
+    store.attach_document(eng.engagement_id, DOC_BALANCE_SHEET, bs)
+    store.attach_document(eng.engagement_id, DOC_PNL, pl)
+    store.attach_document(eng.engagement_id, DOC_PRIOR_YEAR_BS, prior)
+
+    findings = run_rollforward(store, eng)
+    tie = _find(findings, "re_rollforward_tie")
+    assert tie is not None
+    assert tie.severity == SEVERITY_OK
+
+
+def test_re_rollforward_tie_flags_variance_when_prior_differs(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """When prior-year closing RE doesn't match current-year opening RE, the
+    finding fires as ERROR with the dollar variance."""
+    from src.store.engagement_db import DOC_PRIOR_YEAR_BS
+    eng = store.create_engagement("conv-1", CONV_PERSONAL, period_description="2025")
+    bs = tmp_path / "bs.xlsx"
+    pl = tmp_path / "pnl.xlsx"
+    prior = tmp_path / "prior_bs.xlsx"
+    # Current-year opening RE = 132,500
+    _balance_sheet(
+        bs, assets=100000, liab=20000, equity=80000, profit=10000,
+        re=132500, gst_payable=5000,
+    )
+    _pnl(pl, income=200000, cogs=0, expenses=190000, profit=10000)
+    # Prior-year closing RE = 145,200 (the Lefebvre variance pattern)
+    _balance_sheet(
+        prior, assets=160000, liab=15000, equity=145200, profit=0,
+        re=145200, gst_payable=0,
+    )
+    store.attach_document(eng.engagement_id, DOC_BALANCE_SHEET, bs)
+    store.attach_document(eng.engagement_id, DOC_PNL, pl)
+    store.attach_document(eng.engagement_id, DOC_PRIOR_YEAR_BS, prior)
+
+    findings = run_rollforward(store, eng)
+    tie = _find(findings, "re_rollforward_tie")
+    assert tie is not None
+    assert tie.severity == SEVERITY_ERROR
+    # Variance is -12,700 (current opening $12,700 below prior closing).
+    assert "12,700" in tie.title
+    assert "145,200" in tie.detail
+    assert "132,500" in tie.detail
+
+
+def test_no_re_rollforward_tie_without_prior_year_bs(
+    engagement_with_docs, store: EngagementStore
+) -> None:
+    """Without a prior-year BS, the re_rollforward_tie finding is absent —
+    only the snapshot is emitted."""
+    eng, _, _ = engagement_with_docs
+    findings = run_rollforward(store, eng)
+    assert _find(findings, "re_rollforward_tie") is None
+    snapshot = _find(findings, "retained_earnings_snapshot")
+    assert snapshot is not None

@@ -42,6 +42,7 @@ from src.parsers.financial_statement import (
 from src.store.engagement_db import (
     DOC_BALANCE_SHEET,
     DOC_PNL,
+    DOC_PRIOR_YEAR_BS,
     Engagement,
     EngagementStore,
 )
@@ -103,9 +104,31 @@ def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
         findings.extend(_bank_balances(bs))
         findings.extend(_gst_hst_balance(bs))
 
+    prior_bs: FinancialStatement | None = None
+    prior_bs_doc = store.latest_document(engagement.engagement_id, DOC_PRIOR_YEAR_BS)
+    if prior_bs_doc is not None:
+        try:
+            prior_bs = parse_balance_sheet(Path(prior_bs_doc.file_path))
+        except Exception as exc:
+            log.warning(
+                "rollforward.prior_bs_parse_failed path=%s error=%s",
+                prior_bs_doc.file_path, exc,
+            )
+            # Surface as INFO; don't fail the whole agent.
+            findings.append(Finding(
+                agent=AGENT, check="prior_bs_parse", severity=SEVERITY_INFO,
+                title="Prior-year BS uploaded but couldn't be parsed",
+                detail=(
+                    f"{type(exc).__name__}: {exc}. Try uploading in a different "
+                    "format (xlsx preferred) or paste the key opening balances "
+                    "(Retained Earnings, Payroll Liabilities, GST/QST Payable, "
+                    "Corporate Income Tax Payable) directly."
+                ),
+            ))
+
     if bs is not None and pnl is not None:
         findings.extend(_profit_tie(bs, pnl))
-        findings.extend(_retained_earnings_snapshot(bs, pnl))
+        findings.extend(_retained_earnings_snapshot(bs, pnl, prior_bs))
         findings.extend(_inventory_vs_cogs(bs, pnl))
 
     log.info(
@@ -172,7 +195,9 @@ def _profit_tie(bs: FinancialStatement, pnl: FinancialStatement) -> list[Finding
 
 
 def _retained_earnings_snapshot(
-    bs: FinancialStatement, pnl: FinancialStatement
+    bs: FinancialStatement,
+    pnl: FinancialStatement,
+    prior_bs: FinancialStatement | None = None,
 ) -> list[Finding]:
     re = bs.amount_of_any(*L.RETAINED_EARNINGS) or _ZERO
     profit = (
@@ -188,15 +213,64 @@ def _retained_earnings_snapshot(
         parts.append(f"Dividends ${dividends:,.2f}")
     parts.append(f"Total Equity ${total_equity:,.2f}")
 
-    return [Finding(
+    findings: list[Finding] = [Finding(
         agent=AGENT, check="retained_earnings_snapshot", severity=SEVERITY_INFO,
         title="Equity position for CPA review",
         detail="  ·  ".join(parts),
         proposed_fix=(
-            "When the prior-period engagement is available, the agent will compute "
-            "(prior RE + current profit − dividends) and tie to current Total Equity."
+            "When the prior-year BS is uploaded, the agent computes "
+            "(prior closing RE + current profit − dividends) and ties to "
+            "current Total Equity."
         ),
     )]
+
+    # Prior-year BS is available — do the full rollforward tie-out.
+    if prior_bs is not None:
+        prior_closing_re = prior_bs.amount_of_any(*L.RETAINED_EARNINGS) or _ZERO
+        # The BS "opening RE" field is whatever QBO shows as the current-year
+        # opening — which should match the prior BS closing RE exactly.
+        current_opening_re = re  # current BS "Retained Earnings — opening"
+        variance = current_opening_re - prior_closing_re
+
+        if abs(variance) <= _IDENTITY_TOLERANCE:
+            findings.append(Finding(
+                agent=AGENT, check="re_rollforward_tie", severity=SEVERITY_OK,
+                title="Opening RE ties to prior-year BS closing RE",
+                detail=(
+                    f"Prior-year BS closing Retained Earnings: ${prior_closing_re:,.2f}\n"
+                    f"Current-year BS opening Retained Earnings: ${current_opening_re:,.2f}"
+                ),
+            ))
+        else:
+            findings.append(Finding(
+                agent=AGENT, check="re_rollforward_tie", severity=SEVERITY_ERROR,
+                title=f"Opening RE variance ${variance:+,.2f} vs prior-year BS",
+                detail=(
+                    f"The current-year BS shows opening Retained Earnings of "
+                    f"${current_opening_re:,.2f}, but the prior-year BS closes at "
+                    f"${prior_closing_re:,.2f}. Difference: **${variance:+,.2f}**.\n\n"
+                    "This is a pre-current-year posting to RE (or an opening-balance "
+                    "entry error) that must be reconciled before the current-year "
+                    "T2 can be filed with confidence. Common causes: (a) a JE "
+                    "during the current year that hit RE directly (bank-rec "
+                    "plug, 'cleanup' entry, phantom receivable posted to RE), "
+                    "(b) the prior accountant filed T2 on a different trial "
+                    "balance than the QBO opening, (c) amended prior-year T2 "
+                    "not pushed back to QBO."
+                ),
+                proposed_fix=(
+                    "Pull the full JE history for the Retained Earnings account "
+                    "from Jan 1 of the current year onward. Each entry should be "
+                    "either (a) the automatic closing of prior-period NI (fine), "
+                    "(b) a documented prior-period adjustment with explanation, "
+                    "or (c) a documented dividend declaration. Any entry that's "
+                    "none of those — investigate and re-book to the correct "
+                    "account."
+                ),
+                delta=variance,
+            ))
+
+    return findings
 
 
 def _bank_balances(bs: FinancialStatement) -> list[Finding]:

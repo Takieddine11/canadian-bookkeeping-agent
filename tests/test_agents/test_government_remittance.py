@@ -332,3 +332,69 @@ def test_sales_tax_remittance_with_both_legs_not_flagged(
     findings = run_gov(store, eng)
     single = _find(findings, "single_leg_sales_tax_remittance")
     assert single is None  # correctly split → no finding
+
+
+def test_prior_year_bs_completes_three_way_tie(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """When both current-year BS and prior-year BS are uploaded, the
+    reconciliation computes implied current-year activity per category and
+    reports it explicitly — not a snapshot."""
+    from src.store.engagement_db import DOC_PRIOR_YEAR_BS
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+
+    j = tmp_path / "j.csv"
+    _write_journal(j, [
+        # Payroll DAS remittance of $10,000 during the year.
+        ("1", "05/03/2025", "Expense", "", "Receiver General",
+         "Monthly payroll source deductions",
+         "Payroll Liabilities", "10000.00", ""),
+        ("1", "05/03/2025", "Expense", "", "Receiver General", "",
+         "BMO Chequing", "", "10000.00"),
+    ])
+
+    # Prior-year BS: opening Payroll Liabilities = $1,000
+    prior_bs = tmp_path / "prior_bs.xlsx"
+    _write_bs(prior_bs, payroll_liab=1000.0)
+
+    # Current-year BS: closing Payroll Liabilities = $1,500
+    current_bs = tmp_path / "current_bs.xlsx"
+    _write_bs(current_bs, payroll_liab=1500.0)
+
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    store.attach_document(eng.engagement_id, DOC_BALANCE_SHEET, current_bs)
+    store.attach_document(eng.engagement_id, DOC_PRIOR_YEAR_BS, prior_bs)
+
+    findings = run_gov(store, eng)
+    recon = _find(findings, "bs_reconciliation")
+    assert recon is not None
+    # With prior-year BS, we compute implied activity:
+    #   1,000 + activity − 10,000 = 1,500  →  activity = 10,500
+    assert "Three-way reconciliation complete" in recon.detail
+    assert "10,500.00" in recon.detail  # implied activity (withholdings accrued)
+    assert "10,000.00" in recon.detail  # paid
+    assert "1,000.00" in recon.detail   # opening
+    assert "1,500.00" in recon.detail   # closing
+
+
+def test_no_prior_year_bs_falls_back_to_snapshot(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """Without the prior-year BS, reconciliation is snapshot-only and says so."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, [
+        ("1", "05/03/2025", "Expense", "", "Receiver General",
+         "Payroll DAS", "Payroll Liabilities", "1000.00", ""),
+        ("1", "05/03/2025", "Expense", "", "Receiver General", "",
+         "BMO Chequing", "", "1000.00"),
+    ])
+    bs = tmp_path / "bs.xlsx"
+    _write_bs(bs, payroll_liab=500.0)
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    store.attach_document(eng.engagement_id, DOC_BALANCE_SHEET, bs)
+    findings = run_gov(store, eng)
+    recon = _find(findings, "bs_reconciliation")
+    assert recon is not None
+    assert "Current-state snapshot only" in recon.detail
+    assert "prior-year closing BS is uploaded" in recon.detail
