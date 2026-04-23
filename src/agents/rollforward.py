@@ -203,11 +203,17 @@ def _bank_balances(bs: FinancialStatement) -> list[Finding]:
     # Cash/bank accounts are children of "Cash and Cash Equivalent". Use the
     # sibling-level heuristic: gather leaves that sit above "Total Cash and
     # Cash Equivalent" in the lines list.
-    cash_total = bs.amount_of("Total Cash and Cash Equivalent")
+    cash_total = bs.amount_of_any(*L.TOTAL_CASH)
     bank_accounts: list[tuple[str, Decimal]] = []
     in_cash = False
     for line in bs.lines:
-        if line.is_section and "cash" in line.name.lower() and "equivalent" in line.name.lower():
+        n = line.name.lower()
+        is_cash_header = line.is_section and (
+            ("cash" in n and "equivalent" in n)
+            or ("encaisse" in n)
+            or ("trésorerie" in n or "tresorerie" in n)
+        )
+        if is_cash_header:
             in_cash = True
             continue
         if in_cash:
@@ -305,12 +311,7 @@ def _inventory_vs_cogs(
 
 def _gst_hst_balance(bs: FinancialStatement) -> list[Finding]:
     payable = bs.amount_of_any(*L.GST_HST_PAYABLE)
-    # Suspense is usually qualified (e.g. "GST/HST Suspense", "TPS/TVH en suspens")
-    suspense = (
-        bs.amount_of("GST/HST Suspense")
-        or bs.amount_of("TPS/TVH en suspens")
-        or bs.amount_of("Taxes en suspens")
-    )
+    suspense = bs.amount_of_any(*L.GST_HST_SUSPENSE)
     if payable is None and suspense is None:
         return []
 

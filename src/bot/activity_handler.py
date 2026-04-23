@@ -54,6 +54,7 @@ from src.parsers.financial_statement import (
     parse_pnl,
 )
 from src.parsers.journal import JournalReport, parse_journal_csv
+from src.parsers import labels as L
 from src.store.engagement_db import (
     CONV_CHANNEL,
     CONV_GROUP,
@@ -870,7 +871,6 @@ class AuditBot(TeamsActivityHandler):
         return None
 
     def _bs_highlights(self, engagement: Engagement) -> dict[str, str]:
-        from src.parsers import labels as L
         doc = self.store.latest_document(engagement.engagement_id, DOC_BALANCE_SHEET)
         if doc is None:
             return {}
@@ -894,7 +894,6 @@ class AuditBot(TeamsActivityHandler):
         return out
 
     def _pnl_highlights(self, engagement: Engagement) -> dict[str, str]:
-        from src.parsers import labels as L
         doc = self.store.latest_document(engagement.engagement_id, DOC_PNL)
         if doc is None:
             return {}
@@ -1007,7 +1006,6 @@ class AuditBot(TeamsActivityHandler):
             bs = parse_balance_sheet(Path(doc.file_path))
         except Exception:
             return "(parse failed)"
-        from src.parsers import labels as L
         ta = bs.amount_of_any(*L.TOTAL_ASSETS) or _ZERO
         tle = bs.amount_of_any(*L.TOTAL_LIABILITIES_AND_EQUITY) or _ZERO
         identity = "✓" if ta == tle else f"⚠ ${ta:,.2f} vs ${tle:,.2f}"
@@ -1022,7 +1020,6 @@ class AuditBot(TeamsActivityHandler):
             pl = parse_pnl(Path(doc.file_path))
         except Exception:
             return "(parse failed)"
-        from src.parsers import labels as L
         income = pl.amount_of_any(*L.TOTAL_INCOME) or _ZERO
         profit = pl.amount_of_any(*L.NET_PROFIT)
         if profit is None:
@@ -1187,14 +1184,14 @@ class AuditBot(TeamsActivityHandler):
 
         if stmt.report_type == REPORT_BALANCE_SHEET:
             title = "Balance Sheet"
-            key_names = [
-                "Total Assets",
-                "Total Liabilities",
-                "Total Equity",
-                "Retained Earnings",
+            key_checks: list[tuple[str, tuple[str, ...]]] = [
+                ("Total Assets",      L.TOTAL_ASSETS),
+                ("Total Liabilities", L.TOTAL_LIABILITIES),
+                ("Total Equity",      L.TOTAL_EQUITY),
+                ("Retained Earnings", L.RETAINED_EARNINGS),
             ]
-            total_assets = stmt.amount_of("Total Assets") or _ZERO
-            total_leq = stmt.amount_of("Total Liabilities and Equity") or _ZERO
+            total_assets = stmt.amount_of_any(*L.TOTAL_ASSETS) or _ZERO
+            total_leq = stmt.amount_of_any(*L.TOTAL_LIABILITIES_AND_EQUITY) or _ZERO
             diff = total_assets - total_leq
             if diff == 0:
                 integrity = "Accounting identity ✓  (Assets = Liabilities + Equity)"
@@ -1207,12 +1204,16 @@ class AuditBot(TeamsActivityHandler):
                 integrity_color = "attention"
         else:
             title = "Profit & Loss"
-            key_names = ["Total Income", "Total Cost of Goods Sold",
-                         "GROSS PROFIT", "Total Expenses", "PROFIT"]
-            total_income = stmt.amount_of("Total Income") or _ZERO
-            total_exp = stmt.amount_of("Total Expenses") or _ZERO
-            gross = stmt.amount_of("GROSS PROFIT")
-            profit = stmt.amount_of("PROFIT")
+            key_checks = [
+                ("Total Income",             L.TOTAL_INCOME),
+                ("Total Cost of Goods Sold", L.TOTAL_COGS),
+                ("Gross Profit",             L.GROSS_PROFIT),
+                ("Total Expenses",           L.TOTAL_EXPENSES),
+                ("Net Profit",               L.NET_PROFIT),
+            ]
+            total_income = stmt.amount_of_any(*L.TOTAL_INCOME) or _ZERO
+            gross = stmt.amount_of_any(*L.GROSS_PROFIT)
+            profit = stmt.amount_of_any(*L.NET_PROFIT)
             parts = []
             if gross is not None:
                 implied_cogs = total_income - gross
@@ -1224,10 +1225,10 @@ class AuditBot(TeamsActivityHandler):
             integrity_color = "default"
 
         key_figures_lines = []
-        for name in key_names:
-            amt = stmt.amount_of(name)
+        for label, names in key_checks:
+            amt = stmt.amount_of_any(*names)
             if amt is not None:
-                key_figures_lines.append(f"• {name}: ${amt:,.2f}")
+                key_figures_lines.append(f"• {label}: ${amt:,.2f}")
         key_figures = "\n".join(key_figures_lines) or "—"
 
         return _substitute(card, {

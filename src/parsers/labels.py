@@ -90,3 +90,19 @@ GST_HST_PAYABLE = (
     "Taxes de vente à payer", "Taxes de vente a payer",
     "Sales Tax Payable",
 )
+GST_HST_SUSPENSE = (
+    "GST/HST Suspense",
+    "TPS/TVH en suspens",
+    "Taxes en suspens",
+    "Compte d'attente TPS/TVH",
+)
+
+# ---- Cash / bank section ----
+TOTAL_CASH = (
+    "Total Cash and Cash Equivalent",
+    "Total Cash and Cash Equivalents",
+    "Total de l'encaisse et des équivalents",
+    "Total de l'encaisse",
+    "Total trésorerie", "Total tresorerie",
+    "Total de la trésorerie et équivalents",
+)
