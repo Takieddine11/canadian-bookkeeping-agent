@@ -273,6 +273,7 @@ A senior CPA reviewer is judged as much on **what they don't conclude** as on wh
 - **Liquor-store purchases (SAQ, LCBO, BCLDB) coded to Gifts & Promotion or Meals.** Could be a legitimate client gift basket; could be personal consumption. Ask: *"Can you confirm the business purpose and recipient of the <date> <store> purchase ($X)?"* Never state "this looks like personal use" without the confirmation coming back.
 - **Year-end deposits coded to Shareholder Loan with a thin or missing memo** (e.g., "memo unclear", "M. Lavoie", "wire received"). Could genuinely be a shareholder advance, and the account direction may be consistent. Could also be unreported revenue, proceeds from a personal asset sale, a refund, a draw-and-return manipulation. Ask: *"Can you confirm whether the <date> $X deposit is a shareholder advance? If yes, what are the loan terms (rate, repayment)? If not, what does it represent?"* Do NOT list "undisclosed revenue / dividend reversal" as suspicions in the detail — leave the framing neutral until the client answers. **Even when the client self-disclosed the transfer during intake and the memo is explicit ("Personal transfer from JP - cash flow"), that is supporting context, NOT documentation. Still ask for the written loan agreement + shareholder's personal bank statement confirming the outflow.** Accepting-and-moving-on because the story is consistent is the exact failure this rule is designed to prevent.
 - **Year-end material credits / refunds** (e.g., a large "materials return credit" booked Dec 28–31). Even when the tax-reversal math is internally consistent, the year-end timing on a material credit is the classic pattern for expense-management manipulation. Ask for (a) the supplier's credit memo, (b) which specific items were returned, (c) inventory / job-cost records reflecting the return. Do NOT conclude "income management" — ask.
+- **Shareholder-loan movements labeled "unreimbursed corporate expenses paid personally."** A BS supporting schedule that attributes a net increase in the shareholder loan to "expenses the owner paid personally" is a pointer, not documentation. Ask for (a) the receipt-by-receipt list, (b) the vendor/category breakdown, (c) whether any items are personal (gym membership, family groceries, spouse's meals) mixed in with legitimate reimbursements. Do NOT accept the label on its face; do NOT conclude appropriation without the receipts.
 - **Travel to unusual destinations or large YoY spikes** (e.g., a Mexico "planning retreat", travel up 150%+). Ask for the business purpose, attendees, and agenda. Do not conclude it's personal.
 - **Gifts & Promotion YoY spikes** (+100%+). Ask for the nature of the increase before classifying anything as non-deductible.
 - **Unclear or single-word memos on material transactions.** Ask for the underlying documentation; don't guess the economic substance.
@@ -301,6 +302,45 @@ An ITC/ITR can only be claimed when the recipient has a **compliant supplier inv
 # Place-of-supply — service tied to real property
 
 For construction and other services tied to real property, the place of supply (and therefore the tax rate) is determined by **where the property is located**, not where the customer is located. A US-entity client (e.g., "<Name> LLC") does NOT prove the property is in the US; a US-entity may own QC real property. When an invoice is zero-rated on the strength of a foreign-looking client name, the first action is **ask for the exact property address**, not to validate the zero-rating. If the property is in Canada, the supply is taxable at GST/HST (or GST+QST) regardless of who the recipient is.
+
+# Healthcare / professional-corporation rules (SCIAN 621xxx — physicians, dentists, etc.)
+
+Medical and other regulated-profession corporations (physicians, dentists, lawyers, accountants) have distinct tax and ethics frameworks. When client's SCIAN is 621xxx or the file is a "professional corporation" (société par actions professionnelle):
+
+- **ETA Sch V Part II — cosmetic service supply exclusion.** Medical services rendered by a practitioner are generally exempt, **except "cosmetic service supplies"** (ETA s.1(1)). Purely aesthetic Botox, fillers, non-reconstructive laser, cosmetic peels, non-medically-indicated hair removal → **taxable** at 14.975%. Medically-necessary services (biopsy, skin-cancer screening, medically-indicated treatment) → exempt. If the clinic is GST/QST registered and has cosmetic revenue, the default audit question is: *"are cosmetic services being taxed, or coded exempt?"* Bookkeepers often default to "exempt everything because it's a medical practice" — that is wrong for cosmetic supplies and creates a retroactive GST/QST liability (look-back up to 4 years). Voluntary Disclosure Program is the right procedural path before CRA/RQ initiates.
+- **Mixed-use ITC apportionment (s.169(1)).** Professional corps with BOTH exempt (medical) AND taxable (cosmetic) revenue must apportion ITCs on shared inputs by the taxable-activity ratio. Inputs directly attributable to exempt activity (e.g., biopsy supplies) get NO ITC; directly-attributable-to-taxable (e.g., filler product) get 100%; shared overhead (rent, utilities, accounting fees) get the ratio. Flag any file where ITCs are all-or-nothing across shared inputs.
+- **Professional dues follow the individual, not the corporation.** CMQ (Collège des médecins du Québec), OIIQ, Barreau, Ordre des CPA, etc. memberships are personal — the licence is held by the physician/lawyer/CPA, not the corp. When the corp pays: **s.6(1)(a) taxable benefit** if the individual is on T4, or **s.15(1) shareholder benefit** if not. Either way the corporate deduction is denied. The individual claims the dues personally on T1 line 21200. Do not let "clinic paid the CMQ dues" slide as a routine corporate expense.
+- **Physician professional corporations are NOT PSBs** — a medical-practitioner corp billing RAMQ/patients is not at risk of s.125(7) personal services business reclassification, because the practitioner is an autonomous professional under the *Loi sur l'assurance-maladie*, not an employee of RAMQ. Do not flag PSB risk for a physician PC.
+- **Three-class family-share structures approved by the professional order** (CMQ, ODQ, etc.) are legal. Do not flag the share structure itself as an error. But TOSI still applies — see Post-2018 TOSI rules below.
+
+# Post-2018 TOSI framework (ITA s.120.4)
+
+When ANY dividend is paid from a private corp to a family member other than the active principal, apply the split-income test. A "specified individual" is a Canadian-resident adult family member (spouse, adult children, parents, siblings) related to someone with equity or influence in the "related business." Default rule: income is **taxed at top marginal rate on the recipient's T1** unless an **excluded amount** exception applies.
+
+The four excluded-amount exceptions to test, in order:
+
+1. **Excluded shares** — shares held in a corporation that (a) is NOT a **professional corporation**, (b) earns <90% of income from services, (c) is not a shell, AND the specified individual holds ≥10% of both votes and FMV, AND is age 25+. *A medical/dental/legal PC fails on criterion (a) automatically — the excluded-share exemption is NEVER available for a professional corporation.*
+2. **Actively engaged in the business — ≥20 hours per week on average** either in the current or any 5 prior years. "Works part-time elsewhere with occasional help" does not meet the bar. A spouse who has a full-time W-2/T4 job elsewhere and is not regularly in the business fails.
+3. **Age 65+ spousal exception** — specified individual is the spouse of a principal aged 65 or older AND the principal was actively engaged in the business. Common retirement-planning path; doesn't apply to younger owner-managers.
+4. **Reasonable return** — amount paid must be reasonable given (a) work performed, (b) capital contributed, (c) risks assumed, (d) prior returns paid. For a family member who did no work and put in nominal capital, the reasonable return is ~zero.
+
+If NONE apply, the full dividend (not just the excess over a threshold) is TOSI'd at top marginal rate. For eligible dividends, ~47% combined marginal rate (QC); non-eligible ~53%. Flag this clearly and quantify the expected personal tax impact.
+
+# RRSP contributions paid directly by the corporation
+
+If the corporation pays money directly into a shareholder's personal RRSP, three issues compound:
+1. **No corporate deduction** unless properly run through T4 payroll with source deductions — routing through Salaries without a T4 means no deduction on audit.
+2. **s.15(1) shareholder benefit** unless the contribution is repaid or treated as salary/T4.
+3. **s.204.1 over-contribution penalty at 1%/month** on amounts exceeding (prior-year RRSP room + $2,000 buffer). Dividends do NOT generate RRSP room — if the shareholder is on 100% dividend compensation, their 2024 earned income for 2025 RRSP room calculation is likely zero.
+
+Always ask for the shareholder's CRA RRSP Deduction Limit Statement before concluding the correct treatment — carry-forward room from prior-year T4 employment may exist. But do NOT treat the corporate contribution as a routine deduction without the full analysis.
+
+# Gifts of food, beverage, or entertainment — ITA s.67.1 50% rule
+
+Gifts of **wine, spirits, meal gift cards, restaurant certificates, entertainment tickets, show tickets, golf outings, etc.** — even when given to clients as business gifts rather than eaten/attended by employees — fall under the **ITA s.67.1 meals & entertainment 50% deduction limit**. ETA s.236 mirrors the limit for ITC claims.
+- A $4,500 SAQ wine basket to cosmetic-clinic clients: 50% deductible + 50% ITC recoverable — not a 100%-deductible business gift.
+- Gifts of tangible non-food items (branded merchandise, books, etc.) are generally 100% deductible if reasonable under s.67.
+- When flagging, split the analysis: (a) Schedule 1 add-back of 50% of the expense, (b) ITC/ITR reversal of 50% of the tax claimed.
 
 # Canadian compliance checklist — always include relevant items in `judgment_notes`
 
