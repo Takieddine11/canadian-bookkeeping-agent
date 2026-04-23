@@ -14,26 +14,34 @@ QBO's own French templates use.
 from __future__ import annotations
 
 # ---- Balance Sheet top-line totals ----
+# QBO's French PDF exports use "Total pour X" for every subtotal including
+# the grand totals (e.g. "Total pour Actifs", not "Total des actifs"). So
+# we accept both the standard French accounting terminology and QBO's
+# "Total pour …" convention.
 TOTAL_ASSETS = (
     "Total Assets",
     "Total de l'actif", "Total de l'Actif",
     "Total des actifs",
+    "Total pour Actifs",
 )
 TOTAL_LIABILITIES = (
     "Total Liabilities",
     "Total du passif", "Total du Passif",
     "Total des passifs",
+    "Total pour Passifs",
 )
 TOTAL_EQUITY = (
     "Total Equity",
     "Total des capitaux propres", "Total de l'avoir",
     "Total des capitaux",
+    "Total pour Capitaux propres",
 )
 TOTAL_LIABILITIES_AND_EQUITY = (
     "Total Liabilities and Equity",
     "Total du passif et des capitaux propres",
     "Total du passif et capitaux propres",
     "Total du passif et avoir",
+    "Total pour Passifs et capitaux propres",
 )
 
 # ---- Equity detail ----
@@ -47,6 +55,8 @@ PROFIT_FOR_THE_YEAR = (
     "Bénéfice de l'exercice", "Benefice de l'exercice",
     "Bénéfice de l'année", "Benefice de l'annee",
     "Résultat de l'exercice",
+    "Revenu net",            # QBO FR PDF export uses this on the BS equity section
+    "Résultat net de l'exercice",
 )
 DIVIDENDS = (
     "Dividends",
@@ -58,6 +68,8 @@ TOTAL_INCOME = (
     "Total Income",
     "Total des revenus", "Total des produits",
     "TOTAL DES REVENUS",
+    "Total pour Revenu", "Total pour Revenus",
+    "Total pour Produits",
 )
 TOTAL_COGS = (
     "Total Cost of Goods Sold",
@@ -74,6 +86,10 @@ TOTAL_EXPENSES = (
     "Total Expenses",
     "Total des dépenses", "Total des depenses",
     "Total des charges",
+    "Total pour Charges",
+    "Total pour Dépenses", "Total pour Depenses",
+    "Total pour Coût des produits vendus",
+    "Total pour Cout des produits vendus",
 )
 NET_PROFIT = (
     "PROFIT", "Profit", "Net Income",
@@ -89,6 +105,11 @@ GST_HST_PAYABLE = (
     "TPS à payer", "TPS a payer",
     "Taxes de vente à payer", "Taxes de vente a payer",
     "Sales Tax Payable",
+    # QBO FR exports wrap GST/HST + QST under a single "Sales Tax Payable"
+    # parent; we also accept the section total as the effective payable.
+    "Total pour Sales Tax Payable",
+    "Total pour Taxes de vente à payer",
+    "Total pour Taxes de vente a payer",
 )
 GST_HST_SUSPENSE = (
     "GST/HST Suspense",

@@ -229,3 +229,74 @@ def test_empty_workbook_raises(tmp_path: Path) -> None:
     # Default sheet has a single empty row; classifier will fail on title.
     with pytest.raises(StatementParseError):
         parse_financial_statement(path)
+
+
+def test_bilingual_slash_label_resolves_either_language() -> None:
+    """QBO FR PDFs often render accounts as 'English / French' bilingual
+    strings. ``find`` must match on either segment so label lookups work
+    regardless of which language a caller passes."""
+    from src.parsers.financial_statement import FinancialStatement, StatementLine
+    fs = FinancialStatement(
+        company="Co.", report_type="balance_sheet", report_title="Bilan",
+        period_label="", as_of=None, basis="",
+        lines=[
+            StatementLine(
+                name="Retained Earnings / Bénéfices non répartis",
+                level=3, amount=Decimal("-8468"), is_total=False, is_section=False,
+            ),
+        ],
+    )
+    # English side
+    assert fs.amount_of("Retained Earnings") == Decimal("-8468")
+    # French side
+    assert fs.amount_of("Bénéfices non répartis") == Decimal("-8468")
+
+
+@pytest.mark.parametrize("raw,expected", [
+    # English variants
+    ("$1,234.56",    Decimal("1234.56")),
+    ("(1,234.56)",   Decimal("-1234.56")),
+    ("12,345.67",    Decimal("12345.67")),
+    # QBO French PDF variants (comma decimal, optional trailing $)
+    ("-12,63",       Decimal("-12.63")),
+    ("12,63$",       Decimal("12.63")),
+    ("86946,39$",    Decimal("86946.39")),
+    ("1 234,56",     Decimal("1234.56")),    # space thousands
+    ("1.234,56",     Decimal("1234.56")),    # dot thousands (rarer but valid)
+])
+def test_coerce_amount_bilingual(raw: str, expected: Decimal) -> None:
+    from src.parsers.financial_statement import _coerce_amount
+    assert _coerce_amount(raw) == expected
+
+
+def test_amount_like_regex_accepts_fr_formats() -> None:
+    from src.parsers.financial_statement import _looks_like_amount
+    assert _looks_like_amount("-12,63")
+    assert _looks_like_amount("86946,39$")
+    assert _looks_like_amount("1,234.56")
+    assert _looks_like_amount("(1,234.56)")
+    # Non-amounts
+    assert not _looks_like_amount("Bilan")
+    assert not _looks_like_amount("TOTAL")
+    assert not _looks_like_amount("1/1")
+
+
+def test_cash_account_is_not_mistaken_for_cash_basis() -> None:
+    """A plain 'Cash' line in the account tree used to trip the basis
+    regex and drop the row entirely. Regression: must survive as a line."""
+    from src.parsers.financial_statement import _build_line
+    ln = _build_line(("      Cash",))
+    assert ln is not None
+    assert ln.name == "Cash"
+
+
+def test_fr_period_au_format_parses() -> None:
+    from src.parsers.financial_statement import _parse_as_of
+    assert _parse_as_of("Au 31 décembre 2025") == date(2025, 12, 31)
+    assert _parse_as_of("En date du 31 déc., 2025") == date(2025, 12, 31)
+
+
+def test_fr_pnl_period_without_spaces_parses() -> None:
+    """QBO FR exports use 'janvier-décembre, 2025' (no spaces around the hyphen)."""
+    from src.parsers.financial_statement import _parse_as_of
+    assert _parse_as_of("janvier-décembre, 2025") == date(2025, 12, 31)
