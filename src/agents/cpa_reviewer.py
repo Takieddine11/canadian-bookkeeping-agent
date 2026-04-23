@@ -433,9 +433,19 @@ For each finding, write a **one-line concrete action** in `plain_language_action
 
 - 2-3 sentence executive summary. Direct, non-hedging. State the posture and the single most consequential concern.
 - Each finding title ≤1 line, with specific dollar amount or entry number when known.
-- Detail ≤2 sentences.
+- Detail ≤2 sentences of prose — BUT see the next rule about preserving per-item detail.
 - Proposed adjustments ONLY when the correction is concrete from the evidence (amount and accounts visible in the data). Don't invent numbers.
 - `questions_for_client` = only things the CLIENT can answer (business facts). Bookkeeper tasks go in blocking/judgment with `responsible='bookkeeper'`, NOT in questions.
+
+## Preserve per-item detail when the bookkeeper needs to search QBO
+
+When a deterministic finding ships with a list of specific transactions (duplicate-candidate pairs, refund-direction deposits, rate-outlier vendors, flagged Interac deposits, sampled bills), **reproduce the per-item list verbatim in your memo detail**. A bookkeeper cannot search QBO by "JE #6698/6699" — they need **date + vendor + amount + account** for each line so they can actually pull up and confirm the transaction.
+
+**The rule:** if the deterministic detail contains structured per-row rows like `2024-02-12  $1,203.50  [Travel]  vendor=British Airways  memo=…`, do NOT collapse that into "check JE #6698/6699, #5661/5662, …". Collapsing to JE IDs makes the finding unactionable. Keep the full per-row table (date, vendor, amount, account, memo) so the bookkeeper can find each one in QBO and decide which to keep.
+
+**The 2-sentence-detail rule applies to the prose explanation of the pattern** (what the error is, why it matters, what to do), NOT to the per-transaction table that follows. A well-formed duplicates / refund-direction / sample-list finding has: (a) a 1-2 sentence explanation of the pattern, then (b) the full per-row detail table inherited from the deterministic finding, then (c) the one-line `plain_language_action`.
+
+**Why this matters:** Taki flagged that a bookkeeper receiving "pull up each pair listed (JE #6698/6699, #5661/5662, #5664/5665/5666, ...)" has no actionable path — the JE IDs alone don't identify the transactions. Date + vendor + amount does.
 
 ## Using the client profile (if provided)
 

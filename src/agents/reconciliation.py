@@ -161,17 +161,37 @@ def _duplicates(report: JournalReport) -> list[Finding]:
     # is a concrete candidate for CPA review, but we still want the bookkeeper
     # to confirm before deleting anything.
     total_dup_lines = sum(len(g) for g in dup_groups)
-    sample_lines: list[str] = []
-    for group in dup_groups:  # no truncation — user wants every candidate visible
+
+    # Render the detail as a per-duplicate-group block that the bookkeeper can
+    # literally copy-paste into QBO's search. Each group shows: the search key
+    # (date + vendor + amount) as the header, then the individual offending
+    # entries under it so the bookkeeper knows exactly how many copies to find
+    # and which to consider deleting.
+    sort_key = lambda g: (g[0].txn_date, g[0].name.lower(), abs(g[0].debit or g[0].credit))
+    dup_groups_sorted = sorted(dup_groups, key=sort_key)
+    detail_blocks: list[str] = []
+    for group in dup_groups_sorted:
         first = group[0]
         amt = first.debit if first.debit != _ZERO else first.credit
-        memo = first.description[:80] + ("…" if len(first.description) > 80 else "")
-        entries = ", ".join(f"#{l.entry_number or l.group_id}" for l in group)
-        sample_lines.append(
-            f"• {len(group)}×  {first.txn_date.isoformat()}  ${amt:,.2f}  "
-            f"[{first.account}]  vendor=**{first.name}**  "
-            f"entries={entries}  — {memo}"
+        memo = first.description.strip()
+        memo_short = memo[:100] + ("…" if len(memo) > 100 else "")
+        detail_blocks.append(
+            f"**{first.txn_date.isoformat()}  ${abs(amt):,.2f}  {first.name}**  "
+            f"(account: {first.account}) — {len(group)} copies"
+            + (f"\n  memo: {memo_short}" if memo_short else "")
+            + "\n  to find in QBO: search vendor '{vendor}' on {date}, expect {count} entries totaling ${total:,.2f} — keep ONE, delete the rest".format(
+                vendor=first.name, date=first.txn_date.isoformat(),
+                count=len(group), total=abs(amt) * len(group)
+            )
         )
+
+    detail = (
+        f"{len(dup_groups)} duplicate group(s), {total_dup_lines} total lines. "
+        "Each line below is one set to verify — the bookkeeper can copy the "
+        "date + vendor + amount into QBO's vendor/date search to find the "
+        "matching entries.\n\n"
+        + "\n\n".join(detail_blocks)
+    )
 
     return [Finding(
         agent=AGENT, check="duplicates", severity=SEVERITY_WARN,
@@ -179,12 +199,13 @@ def _duplicates(report: JournalReport) -> list[Finding]:
             f"{len(dup_groups)} high-confidence duplicate candidate(s) "
             f"covering {total_dup_lines} lines"
         ),
-        detail="\n".join(sample_lines),
+        detail=detail,
         proposed_fix=(
             "Each candidate matched on date + vendor + account + amount + memo, "
             "across different journal-entry IDs — strong indicators of the same "
-            "transaction entered twice. Please open each pair in QBO, confirm "
-            "they're the same underlying transaction, and delete the duplicate. "
+            "transaction entered twice (classic bank-feed 'Add vs Match' mistake). "
+            "For each group above, search QBO by vendor name and date, confirm "
+            "the entries are the same transaction, keep ONE, and delete the rest. "
             "Small repeating amounts (bank fees, processor tokens) are already "
             "filtered out; any recurring 4+ pattern is treated as a subscription, "
             "not a duplicate."
