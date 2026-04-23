@@ -340,6 +340,7 @@ Always ask for the shareholder's CRA RRSP Deduction Limit Statement before concl
 The most common real-world bookkeeping errors are not exotic tax rules — they are mundane inattention mistakes that repeat across files. Scan for these on every engagement, even when the file looks clean:
 
 - **Bank-feed "add vs match" duplicates.** QBO's #1 bookkeeper mistake: a Bill is entered, then the bank-feed transaction for the same vendor/amount is coded as a fresh Expense (bookkeeper clicked "Add" in the feed review instead of "Match" to the existing Bill's payment). Signature: same vendor + same amount + close-by dates + a Bill AND an Expense both hitting the same expense GL. Also watch for: one Bill with a Payment entry + an Expense on the card/bank later that duplicates. When you see any recurring vendor (telecom, SaaS, rent, freelance) with multiple postings in the same month — verify they're not the same transaction recorded twice.
+  - **Framing discipline on duplicate findings.** When a duplicate is clearly the primary issue, lead with "duplicate, period" and keep it as a single Tier-4 finding. If a memo on one of the duplicates is ambiguous (e.g., "personal account paid from corp"), treat that as a resolve-by-asking clarifier — not as a competing or additional primary interpretation. A Tier-4 finding split into two parallel interpretations confuses the bookkeeper; a single clean finding plus a follow-up question is cleaner.
 - **Direction errors on deposits vs payments.** A REFUND paid TO a client is money going OUT (Cr cash). A REFUND received FROM a vendor/government is money coming IN (Dr cash) but against the original expense/liability account, NOT to revenue. Specific patterns to flag as Tier 4:
   - Client refund booked as a deposit (Dr cash / Cr revenue) — doubles the cash error and creates phantom revenue. Real fix: Dr Revenue / Cr cash.
   - GST/QST refund from CRA/RQ booked to Service Revenue — must be posted against GST-HST Payable / QST Payable (reducing the net receivable position that triggered the refund).
@@ -409,6 +410,15 @@ Pick exactly one per finding — the party PRIMARILY responsible for the first a
 ## Priority
 
 Assign `priority` as a rank number, 1 = most urgent, across the COMBINED blocking + judgment list. Every blocking item's priority number must be lower (more urgent) than every judgment item's. Priority within each list is by (a) compliance risk (CRA/RQ reassessment exposure) first, (b) materiality in dollars, (c) how long the fix takes.
+
+## Tier 2 vs Tier 3 — labeling discipline
+
+A common slip is to over-apply the Tier-2 ASK-don't-ASSUME frame to items that are actually Tier-3 flag-and-recommend. The distinction:
+
+- **Tier 2** = *genuine judgment-call items where the data is ambiguous and a legitimate business reason could exist.* Liquor-store purchases, thin-memo shareholder-loan deposits, travel/gift spikes, "Christmas chalet"-type entries. The action is to ask a neutral question and wait for the answer before concluding.
+- **Tier 3** = *concrete items with a clear recommendation attached.* Request receipts, reclassify to the right account, verify a registration, obtain a document. The bookkeeper knows exactly what to go do. Example: "Shareholder loan moved +$6K labeled 'reimbursement of expenses paid personally' — request the receipt list and vendor/category breakdown."
+
+Both may involve a question to the client, but Tier 2 is *"we cannot conclude without this answer"* while Tier 3 is *"here's the gap, here's the evidence we need to close it, here's the fix once the evidence is in."* When a judgment tier is unclear, default to Tier 3 if the recommended action is concrete.
 
 ## Plain-language action
 
