@@ -142,6 +142,30 @@ def test_french_journal_parses() -> None:
     assert loyer.debit == Decimal("330")
 
 
+def test_fr_curly_apostrophe_header_parses() -> None:
+    """QBO FR CSVs emit 'Date de l'opération' / 'Type d'opération' / 'Nom
+    complet' (with a U+2019 curly apostrophe, not U+0027). Header-row
+    detection must handle both forms."""
+    rows = [
+        ["Journal", "", "", "", "", "", "", "", ""],
+        ["Test Co.", "", "", "", "", "", "", "", ""],
+        ["1 janvier-31 décembre, 2025", "", "", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", "", ""],
+        # Curly U+2019 apostrophes, new FR phrasing:
+        ["", "Date de l’opération", "Type d’opération", "Nº",
+         "Nom", "Description", "Nom complet", "Débit", "Crédit"],
+        ["100", "", "", "", "", "", "", "", ""],
+        ["", "01/01/2025", "Écriture", "1", "", "Adj", "Cash", "10.00", ""],
+        ["", "01/01/2025", "Écriture", "1", "", "Adj", "Owner Equity", "", "10.00"],
+        ["Total pour 100", "", "", "", "", "", "", "$10.00", "$10.00"],
+    ]
+    r = parse_journal_rows(rows)
+    assert r.company == "Test Co."
+    assert len(r.lines) == 2
+    assert r.lines[0].account == "Cash"
+    assert r.unbalanced_groups() == []
+
+
 def test_bad_date_row_is_skipped_not_fatal(caplog: pytest.LogCaptureFixture) -> None:
     rows = [
         ["Journal", "", "", "", "", "", "", "", ""],

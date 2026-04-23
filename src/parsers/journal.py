@@ -36,32 +36,65 @@ from typing import Iterable
 
 log = logging.getLogger(__name__)
 
-# Accept English OR French header signatures — QBO French exports use
-# "Date de transaction" / "Type de transaction" in place of the English ones.
-HEADER_SIGNATURES: tuple[tuple[str, ...], ...] = (
-    ("", "Transaction date", "Transaction type", "#"),
-    ("", "Date de transaction", "Type de transaction", "Nº"),
-    ("", "Date de transaction", "Type de transaction", "No"),
-    ("", "Date de transaction", "Type de transaction", "#"),
-)
-# Accept both "Total for X" and "Total pour X" prefixes for group-total rows.
+# Header-row detection. Rather than match an exact signature tuple (QBO
+# emits at least 4 different header phrasings across EN/FR exports plus
+# curly-vs-straight apostrophes), we look for any row where cells[0] is
+# empty and every required logical column can be resolved via
+# _COLUMN_SYNONYMS. This adds support for "Date de l'opération" /
+# "Type d'opération" / "Nom complet" (QBO FR v2 export) without adding
+# yet another rigid signature.
 TOTAL_PREFIXES: tuple[str, ...] = ("Total for ", "Total pour ")
 GRAND_TOTAL_LABELS: tuple[str, ...] = ("TOTAL",)
 
 # Column-name synonyms — different QBO export configs and locales use different
 # labels for the same field. The parser looks up each column by trying these
-# names in order.
+# names in order. Apostrophes are normalized to a straight ASCII apostrophe
+# before comparison (QBO FR PDFs/CSVs emit U+2019 curly quotes).
 _COLUMN_SYNONYMS: dict[str, tuple[str, ...]] = {
-    "date":    ("Transaction date", "Date de transaction"),
-    "type":    ("Transaction type", "Type de transaction"),
+    "date":    (
+        "Transaction date",
+        "Date de transaction",
+        "Date de l'opération", "Date de l'operation",
+    ),
+    "type":    (
+        "Transaction type",
+        "Type de transaction",
+        "Type d'opération", "Type d'operation",
+    ),
     "num":     ("#", "Num", "Nº", "No"),
     "name":    ("Name", "Nom"),
     "desc":    ("Description", "Memo", "Mémo"),
-    "account": ("Account full name", "Full name", "Split",
-                "Nom complet du compte", "Compte", "Nom du compte"),
+    "account": (
+        "Account full name", "Full name", "Split",
+        "Nom complet du compte", "Nom complet",
+        "Compte", "Nom du compte",
+    ),
     "debit":   ("Debit", "Débit"),
     "credit":  ("Credit", "Crédit"),
 }
+_REQUIRED_COLS = ("date", "type", "account", "debit", "credit")
+
+
+def _normalize_cell(text: str) -> str:
+    """Normalize a header/cell value for comparison: straighten curly quotes,
+    collapse whitespace. QBO FR exports mix U+2019 (') with U+0027 (')
+    inconsistently across report types."""
+    return (
+        text.replace("’", "'").replace("‘", "'")
+             .replace("“", '"').replace("”", '"')
+             .strip()
+    )
+
+
+# Kept for backwards compatibility with any callers/tests that imported it.
+# The parser no longer uses this to detect the header row.
+HEADER_SIGNATURES: tuple[tuple[str, ...], ...] = (
+    ("", "Transaction date", "Transaction type", "#"),
+    ("", "Date de transaction", "Type de transaction", "Nº"),
+    ("", "Date de transaction", "Type de transaction", "No"),
+    ("", "Date de transaction", "Type de transaction", "#"),
+    ("", "Date de l'opération", "Type d'opération", "Nº"),
+)
 
 # QBO exports from Excel are typically cp1252 on Canadian/French locales — try
 # UTF-8 first (covers modern exports + the BOM), fall back to cp1252.
@@ -243,26 +276,41 @@ def parse_journal_rows(rows: list[list[str]]) -> JournalReport:
 def _parse_preamble(rows: list[list[str]]) -> tuple[str, str, int, _ColumnMap]:
     """Return (company, period, header_row_index, column_map).
 
-    Finds the header row by matching any of the accepted signatures on the first
-    4 cells (English or French QBO exports), then builds a ``_ColumnMap`` by
-    looking up each expected logical column via ``_COLUMN_SYNONYMS``.
+    Finds the header row by looking for the first row in the first 15 where
+    cells[0] is empty (the QBO convention for the column-header row) and
+    every required logical column (date/type/account/debit/credit) can be
+    resolved via ``_COLUMN_SYNONYMS``. This is more resilient than rigid
+    signature matching — QBO alone ships at least 4 different header
+    phrasings across EN/FR exports.
     """
     company = ""
     period = ""
     for i, row in enumerate(rows[:15]):
-        header_cells = [str(c).strip() if c is not None else "" for c in row]
-        if len(header_cells) >= 4 and tuple(header_cells[:4]) in HEADER_SIGNATURES:
-            return company, period, i, _build_column_map(header_cells)
-        # Row 0 = title ("Journal"); row 1 = company; row 2 = period.
+        header_cells = [_normalize_cell(str(c)) if c is not None else "" for c in row]
+        if len(header_cells) >= 4 and not header_cells[0]:
+            col = _try_build_column_map(header_cells)
+            if col is not None:
+                return company, period, i, col
         first = header_cells[0] if header_cells else ""
         if i == 1 and first:
             company = first
         elif i == 2 and first:
             period = first.strip('"')
     raise JournalParseError(
-        "Could not find QBO Journal header row "
-        f"(tried signatures {HEADER_SIGNATURES!r} in first 15 rows)"
+        "Could not find QBO Journal header row — no row in the first 15 "
+        "contained resolvable date/type/account/debit/credit columns. "
+        f"Required logical columns: {_REQUIRED_COLS!r}. "
+        f"First 6 rows seen: "
+        f"{[row[:6] for row in rows[:6]]!r}"
     )
+
+
+def _try_build_column_map(header_cells: list[str]) -> "_ColumnMap | None":
+    """Attempt to resolve every required column. Return None on miss."""
+    try:
+        return _build_column_map(header_cells)
+    except JournalParseError:
+        return None
 
 
 def _build_column_map(header_cells: list[str]) -> _ColumnMap:
