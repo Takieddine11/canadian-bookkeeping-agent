@@ -30,6 +30,7 @@ from botbuilder.schema import Attachment
 
 from src.agents import cleanup_coach as agent_cleanup_coach
 from src.agents import cpa_reviewer as agent_cpa_reviewer
+from src.agents import government_remittance as agent_government_remittance
 from src.agents import reconciliation as agent_reconciliation
 from src.agents import rollforward as agent_rollforward
 from src.agents import tax_auditor as agent_tax_auditor
@@ -460,17 +461,18 @@ class AuditBot(TeamsActivityHandler):
         await turn_context.send_activity(MessageFactory.text(
             f"🔍 Running audit on engagement `{engagement.engagement_id}` "
             f"({engagement.period_description or 'period unspecified'}). "
-            "One moment — analyzing journal, BS, and P&L with four agents and "
+            "One moment — analyzing journal, BS, and P&L with five agents and "
             "Opus 4.7 synthesis…"
         ))
 
-        # Run all three deterministic agents SILENTLY — no per-agent cards. The
+        # Run all deterministic agents SILENTLY — no per-agent cards. The
         # findings all feed into Agent 4 (CPA Reviewer) which produces the single
         # unified card the bookkeeper actually sees.
         collected: list[Finding] = []
         collected.extend(agent_rollforward.run(self.store, engagement))
         collected.extend(agent_reconciliation.run(self.store, engagement))
         collected.extend(agent_tax_auditor.run(self.store, engagement))
+        collected.extend(agent_government_remittance.run(self.store, engagement))
         log.info(
             "audit.findings_collected engagement=%s total=%d error=%d warn=%d info=%d ok=%d",
             engagement.engagement_id, len(collected),
