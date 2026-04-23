@@ -335,6 +335,36 @@ If the corporation pays money directly into a shareholder's personal RRSP, three
 
 Always ask for the shareholder's CRA RRSP Deduction Limit Statement before concluding the correct treatment — carry-forward room from prior-year T4 employment may exist. But do NOT treat the corporate contribution as a routine deduction without the full analysis.
 
+# Bookkeeper inattention errors — the "boring pass" checklist
+
+The most common real-world bookkeeping errors are not exotic tax rules — they are mundane inattention mistakes that repeat across files. Scan for these on every engagement, even when the file looks clean:
+
+- **Bank-feed "add vs match" duplicates.** QBO's #1 bookkeeper mistake: a Bill is entered, then the bank-feed transaction for the same vendor/amount is coded as a fresh Expense (bookkeeper clicked "Add" in the feed review instead of "Match" to the existing Bill's payment). Signature: same vendor + same amount + close-by dates + a Bill AND an Expense both hitting the same expense GL. Also watch for: one Bill with a Payment entry + an Expense on the card/bank later that duplicates. When you see any recurring vendor (telecom, SaaS, rent, freelance) with multiple postings in the same month — verify they're not the same transaction recorded twice.
+- **Direction errors on deposits vs payments.** A REFUND paid TO a client is money going OUT (Cr cash). A REFUND received FROM a vendor/government is money coming IN (Dr cash) but against the original expense/liability account, NOT to revenue. Specific patterns to flag as Tier 4:
+  - Client refund booked as a deposit (Dr cash / Cr revenue) — doubles the cash error and creates phantom revenue. Real fix: Dr Revenue / Cr cash.
+  - GST/QST refund from CRA/RQ booked to Service Revenue — must be posted against GST-HST Payable / QST Payable (reducing the net receivable position that triggered the refund).
+  - Government remittance (payment out) booked to an expense account — should be Dr liability / Cr cash.
+- **Cutoff discipline — invoice date ≠ work date.** A memo saying "Dec 2024 work" on a Jan 2025 invoice means the revenue belongs in FY2024, not FY2025. Read every cross-year invoice memo. Flag as Tier 4 if prior-year T2 was filed without the accrual, or as Tier 3 if within the same fiscal year (process discipline only, no tax-year impact).
+- **Prepaid amortization not run.** A 12-month insurance/subscription/rent prepayment made mid-year should have the current-year portion in expense and the remaining months sitting on the BS as Prepaid Expenses. If the BS Prepaid balance equals the original payment AND the P&L expense line looks normal, the amortization schedule wasn't run — either expense is overstated (full amount hit) OR prepaid is overstated (nothing moved to expense). Reconcile Prepaid balance + expense + months elapsed before accepting either line.
+- **Negative-inventory / ghost-GL accounts on the BS.** An Inventory balance with a credit sign ($(2,450), etc.) is impossible. Usually a residual from a prior bookkeeper's abandoned inventory setup. Flag as Tier 4 — must be reconciled and cleared before close.
+- **Suspense / Unclassified accounts at year-end.** Any balance > $0 in a suspense or uncategorized account at fiscal year-end is a confessed unresolved issue — the bookkeeper knows something is wrong but hasn't run it down. Do not close the year with these open.
+- **Bad-debt write-off vs invoice void — distinct tools.** If the JE memo says "duplicate" or "wrong invoice" but the JE debits Bad Debt Expense, that's a contradiction. A duplicate should be VOIDED (reverses the original invoice including tax); a genuine uncollectible AR should be written off to Bad Debt with a tax bad-debt adjustment under ETA s.231. The memo contradicts the account used.
+- **Missing period accruals.** Salaries paid on Dec 31 for the pay period ending earlier, with no accrual for Dec 16–31 work, = missing accrued-salary liability. Cross-check: annual salary run-rate × (days worked / 365) should approximate the annual P&L salary line; a visible shortfall at year-end signals missing accrual. Same pattern applies to vendor accruals, utilities, interest.
+- **Stale carrying balances in Undeposited Funds / Accrued Liabilities / Prepaid** — any clearing or timing account sitting with a material balance for > 30 days needs investigation.
+
+These are boring. They are also where the money actually leaks. Give each finding a one-line Tier 4 slot with the specific entry number and proposed fix; do not let them fall through because they don't look dramatic.
+
+# ETA s.67.1(4) exceptions to the M&E 50% rule — do NOT flag these as errors
+
+The s.67.1 meals & entertainment 50% cap has documented exceptions where **100% deduction + 100% ITC** is correct. Before flagging any meals entry as a "100% ITC violation," check whether it fits one of these:
+
+- **Employer-provided meals at an office party or similar event, up to 6 events per year** — the classic Christmas lunch, summer BBQ, team off-site meal. All employees (or all employees at a particular location) must be invited. $100 per employee threshold per event. If the JE memo says "Christmas lunch," "team lunch," "staff appreciation," "office party," "summer social" — 100% is correct, do NOT flag as a 50%-rule violation.
+- **Meals billed to a specific client and re-invoiced at cost** — if the meals appear as a client disbursement that was billed through, the 50% rule doesn't apply to the corporation.
+- **Meals provided in remote work locations** (long-haul truck drivers, offshore rigs, camps) — specific exception for remote-site employees.
+- **Meals included in the price of a ticket** (airline meals, conference fees that include lunch) — bundled supply, not separately subject to 50%.
+
+If the memo evidence for one of these exceptions is present (e.g., "Christmas lunch with staff" at a reasonable per-head cost), the 100% ITC is CORRECT. Flagging it as an error is a false positive — and a particularly embarrassing one because it's the most visible finding on any audit memo.
+
 # Gifts of food, beverage, or entertainment — ITA s.67.1 50% rule
 
 Gifts of **wine, spirits, meal gift cards, restaurant certificates, entertainment tickets, show tickets, golf outings, etc.** — even when given to clients as business gifts rather than eaten/attended by employees — fall under the **ITA s.67.1 meals & entertainment 50% deduction limit**. ETA s.236 mirrors the limit for ITC claims.
