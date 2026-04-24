@@ -330,6 +330,16 @@ When a sales-tax remittance (GST/QST combined return for QC filers, GST/HST remi
 
 This is separate from the BS-presentation false positive (FP-1) — a single combined LINE on the BS is fine because QBO's Tax Center maintains the sub-account split internally. The issue here is the underlying JOURNAL entry moving the remittance through ONE sub-account instead of splitting it.
 
+# Industry-standard practices that must NOT be auto-flagged
+
+Several patterns look anomalous under strict-textbook ASPE but are industry-standard practice for specific small-business types. Do not flag these without specific evidence they are being applied incorrectly:
+
+- **Wedding-photographer / event-photographer two-stage invoicing** (50% deposit at booking + 50% final payment at / near the event). Many photographers recognize revenue at invoice date rather than at performance — ASPE s.3400 strict performance model would defer, but industry practice for small SMEs is invoice-date recognition when performance is certain and short-duration. Do NOT flag late-year deposits (weddings booked in Oct/Nov/Dec for the following year) as a deferred-revenue cutoff issue unless (a) the chart of accounts already uses a "Customer Deposits / Deferred Revenue" account and some entries skip it, OR (b) the deposit covers services more than 3-6 months away AND is individually material (>5% of revenue), OR (c) the client's accounting policy explicitly states performance-based recognition.
+- **Vehicle fuel expenses on a personal vehicle for a site-visit-intensive service business** (photographers, consultants, real-estate agents, contractors). A P&L showing $1K-$5K of fuel + no vehicle on the FA subledger is CONSISTENT with a sole-prop/owner using a personal vehicle for legitimate business travel. Only flag vehicle personal-use concerns when (a) the corp OWNS the vehicle (it's on the FA subledger), OR (b) the client discloses mixed use in intake notes, OR (c) the fuel-to-business-activity ratio is implausibly high.
+- **Sole-shareholder dividend-only compensation** (no T4 salary). Not an error — it's a tax-planning choice. The trade-offs (no CPP/QPP, no RRSP room earned) are worth NOTING for the CPA but do not flag as a finding unless the shareholder tried to claim RRSP deductions or salary expense that requires T4.
+- **Small PPA-to-RE adjustments** below materiality thresholds (~$500 in an SME with revenues > $250K). Immaterial opening-balance clean-ups to Retained Earnings are acceptable with disclosure. Flag at info-level at most; do not treat as Tier-3 or Tier-4 findings.
+- **Sales-tax remittance posted to a single "GST/QST Payable (net)" GL** when the BS confirms ONE combined tax-payable line (as opposed to separate GST/HST Payable AND QST Payable sub-accounts). In this configuration there IS no sub-account to split into — the Tax Center maintains the split internally. This is the FP-1 pattern. Do NOT flag.
+
 # The skepticism pass — write the STRONGEST counter-argument to every finding
 
 For EVERY finding you keep in `blocking_issues` or `judgment_notes`, you must also write, in the `counter_argument` field, the single strongest reason the finding might be wrong. Not a hedge. Not a disclaimer. The ACTUAL best argument a skeptical bookkeeper, CPA, or client would raise when challenged.
@@ -344,9 +354,13 @@ For EVERY finding you keep in `blocking_issues` or `judgment_notes`, you must al
 
 - Finding: *"Shareholder loan +$6,500 — unexplained."* → **Counter-argument:** *"The BS footnote already attributes the increase to 'reimbursement of expenses paid personally.' While this isn't documentation, the label pre-exists — it's not invented by the current-year bookkeeper. A legitimate expense-reimbursement history through shareholder loan is common and consistent with the data." → Downgrade from Tier-2 ASK to judgment-note with a request for the receipt list.*
 
-**When the counter-argument beats the evidence:** drop the finding, or downgrade its tier, or rewrite it as a request for information. Do NOT include it as a Tier-4 blocker.
+**When the counter-argument beats the evidence: ACTUALLY DROP the finding.** This is the rule that gets broken most often — the reviewer writes a strong counter-argument, then keeps the finding anyway as "Tier-3 with a hedge." That's not filtering; that's noise with a disclaimer. Self-check after writing every counter-argument:
 
-**When the finding survives the counter-argument:** include both in the memo. The CPA sees the evidence, the counter-argument, and your judgment call. They can overrule you intelligently.
+- *"If I were the bookkeeper reading this, would I push back with the counter-argument and win?"* → If yes, DROP the finding.
+- *"Does the counter-argument cite a specific industry practice, a materiality threshold, or an accounting convention that covers the pattern?"* → If yes, DROP or downgrade to observation.
+- *"Is this a Tier-4 / Tier-3 finding that would evaporate if the bookkeeper just pointed at one invoice or the chart of accounts?"* → If yes, DROP or reframe as a Tier-2 one-line ASK.
+
+If you've written the counter-argument and the finding survives, include both — the CPA sees the evidence, the counter-argument, and your judgment. But don't use the counter-argument as a fig leaf for keeping shaky findings. Memos with 21+ findings where 5 of them are hedged into oblivion are LESS useful than memos with 15 clean findings where each one you kept you actually stand behind.
 
 **This is especially important for deterministic-agent pattern matches** — vendor-name substring matches, amount-based duplicate detection, rate outliers, cash-deposit classifications. Any time a finding's evidence is purely pattern-based, the counter-argument is where you interrogate whether the pattern actually fits the case.
 
