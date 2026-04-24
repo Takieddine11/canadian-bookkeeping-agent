@@ -205,6 +205,34 @@ class LlmFinding(BaseModel):
             "the finding, downgrade the finding\\'s tier or drop it."
         ),
     )
+    evidence_detail: str = Field(
+        default="",
+        description=(
+            "RICH-MEMO FIELD (for the PDF attachment, not the Teams card). "
+            "Extended explanation of the finding for the CPA memo: full "
+            "context, why the rule applies here, what the impact is in "
+            "dollars, what the corrective path looks like. Write 1-3 "
+            "paragraphs of genuine CPA-to-CPA analysis. Quote specific "
+            "memos, entry IDs, and dollar amounts verbatim from the "
+            "source data. This is the section a CPA colleague would read "
+            "to understand the finding without needing to re-audit the "
+            "evidence. Leave blank ONLY for trivial findings where the "
+            "one-line title + action already says everything."
+        ),
+    )
+    per_item_rows: list[str] = Field(
+        default_factory=list,
+        description=(
+            "RICH-MEMO FIELD. When the finding is backed by a list of "
+            "specific transactions (duplicates, refund deposits, rate "
+            "outliers, miscoded M&E meals, vendor samples), emit each "
+            "row as one pre-formatted line so the PDF renders a clean "
+            "list. Format: '2025-10-05  $1,650.00  Apple Canada  "
+            "(Small Equipment) — memo: iPhone 16 Pro Mikhaïla personal'. "
+            "Preserve the date + vendor + amount + account + memo so "
+            "the bookkeeper can search QBO. Don't collapse to JE IDs."
+        ),
+    )
 
 
 class LlmReviewOutput(BaseModel):
@@ -245,9 +273,85 @@ class LlmReviewOutput(BaseModel):
     sign_off_ready: bool = Field(
         description="True only if no blocking issues remain after CPA judgment."
     )
+    # ---- RICH-MEMO FIELDS (PDF attachment) ----
+    memo_executive_summary_long: str = Field(
+        default="",
+        description=(
+            "RICH-MEMO FIELD. The full CPA-memo executive summary, 1-3 "
+            "paragraphs of genuine senior-CPA prose. Names the posture, "
+            "the most consequential finding(s), the headline number "
+            "(overstated/understated/at risk), and the critical next "
+            "step(s). Written for a CPA reader who will sign the T2. "
+            "The short `executive_summary` field above is for the Teams "
+            "card; this is the PDF version with full context."
+        ),
+    )
+    industry_context: str = Field(
+        default="",
+        description=(
+            "RICH-MEMO FIELD. When the client's SCIAN code or business "
+            "type triggers industry-specific rules (construction: "
+            "T5018/RL-31/RBQ/CCQ/holdback; healthcare pro-corp: "
+            "cosmetic-service-supply/mixed-use ITC/professional dues; "
+            "restaurant: TIP reporting; etc.), open the memo with a "
+            "2-5 sentence industry-context block that lists the "
+            "applicable rules. Leave blank when no industry triggers apply."
+        ),
+    )
+    document_requests: list[str] = Field(
+        default_factory=list,
+        description=(
+            "RICH-MEMO FIELD. Specific documents the CPA needs the "
+            "bookkeeper or client to provide to close out the engagement. "
+            "One line per document. Examples: 'Prior-year BS (Dec 31, "
+            "2024) in any format.' 'RQ notice showing breakdown of Q4 "
+            "GST/QST late filing: principal / penalty / interest.' '2025 "
+            "km log for Dr. Rousseau\\'s Hyundai lease.'"
+        ),
+    )
+    filing_deadlines: list[str] = Field(
+        default_factory=list,
+        description=(
+            "RICH-MEMO FIELD. Upcoming filing deadlines relevant to the "
+            "engagement. One line per deadline with date. Examples: "
+            "'Q4 2025 GST/QST — due Jan 31, 2026.' 'T4 + RL-1 summary "
+            "— due Feb 28, 2026.' 'T5 + RL-3 for dividends — due Feb "
+            "28, 2026.' 'T5018 construction slips — due Jun 30, 2026.'"
+        ),
+    )
+    closing_notes: str = Field(
+        default="",
+        description=(
+            "RICH-MEMO FIELD. Final CPA observations that aren't "
+            "findings — trajectory, planning recommendations, items "
+            "for the next engagement, strategic context. 1-3 paragraphs "
+            "of senior-CPA commentary. Leave blank if nothing material "
+            "to add."
+        ),
+    )
 
 
 _LLM_SYSTEM_PROMPT = """You are a senior Canadian CPA reviewing a bookkeeper's close before client sign-off. A deterministic audit pipeline has run and produced findings; your job is to apply professional judgment to those findings and produce a structured review memo.
+
+# Output deliverables — TWO audiences
+
+Your single structured output is consumed by TWO downstream surfaces:
+
+1. **Teams card** (short, scan-first). Populated from: `executive_summary` (2-3 sentences), finding `title` (one line), `detail` (1-2 sentences), `plain_language_action` (one line), `counter_argument` (1-2 sentences).
+2. **PDF audit memo** (full CPA deliverable, printable, shareable with the client). Populated from the RICH-MEMO fields marked in the schema: `memo_executive_summary_long` (1-3 paragraphs), `industry_context` (SCIAN-triggered context), finding `evidence_detail` (1-3 paragraphs of CPA-to-CPA analysis per finding), finding `per_item_rows` (one formatted row per transaction for duplicate lists / refund deposits / miscoded M&E entries / sample bills), `document_requests` (specific documents needed), `filing_deadlines` (upcoming dates), `closing_notes` (trajectory / planning).
+
+**Both are required.** The bookkeeper sees the card in Teams; the CPA signing the T2 reads the PDF. Write BOTH at senior-CPA fidelity — the short fields are terse on purpose, but the rich fields carry the full analysis.
+
+For the RICH-MEMO fields specifically, match the depth a senior CPA would hand to a colleague:
+- Quote specific memos, entry IDs, dollar amounts, and vendor names verbatim from the data
+- Show your math: "Annual M&E $8,512 × 14.975% × 50% ≈ $637 ITC/ITR overclaimed"
+- Explain WHY the rule applies here, not just what the rule is
+- Name the impact in dollars on P&L / BS / tax return lines
+- In the `evidence_detail` per finding, 1-3 paragraphs is the target depth
+- In `per_item_rows`, preserve date + vendor + amount + account + memo so the bookkeeper can search QBO
+
+Do NOT treat the rich fields as optional. A finding without `evidence_detail` gets rendered as a one-liner in the PDF, which fails the "CPA-grade memo" requirement. Fill them unless the finding is genuinely trivial.
+
 
 # Canadian sales-tax primer (essential context)
 

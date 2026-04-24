@@ -56,6 +56,7 @@ from src.parsers.financial_statement import (
 )
 from src.parsers.journal import JournalReport, parse_journal_csv
 from src.parsers import labels as L
+from src.reports.memo_pdf import MemoContext, generate_memo_pdf
 from src.store.engagement_db import (
     CONV_CHANNEL,
     CONV_GROUP,
@@ -688,11 +689,22 @@ class AuditBot(TeamsActivityHandler):
             client_profile=profile_dict,
         )
         if llm_output is not None:
+            # Card first — short, fits in Teams. Then the PDF attachment
+            # with the full CPA-grade memo, generated from the rich fields
+            # on the LLM output.
             await turn_context.send_activity(
                 MessageFactory.attachment(
                     CardFactory.adaptive_card(self._render_cpa_memo_llm(memo, llm_output))
                 )
             )
+            try:
+                await self._send_memo_pdf(turn_context, engagement, llm_output)
+            except Exception:
+                log.exception(
+                    "agent.cpa_reviewer.pdf_failed engagement=%s — "
+                    "card already delivered",
+                    engagement.engagement_id,
+                )
             log.info(
                 "agent.cpa_reviewer.done engagement=%s source=llm "
                 "errors=%d warnings=%d sign_off_ready=%s",
@@ -712,6 +724,53 @@ class AuditBot(TeamsActivityHandler):
             "errors=%d warnings=%d sign_off_ready=%s",
             engagement.engagement_id, memo.n_errors, memo.n_warnings,
             memo.sign_off_ready,
+        )
+
+    async def _send_memo_pdf(
+        self,
+        turn_context: TurnContext,
+        engagement: Engagement,
+        llm_output: "agent_cpa_reviewer.LlmReviewOutput",
+    ) -> None:
+        """Generate the full CPA-grade audit memo as a PDF and attach it to
+        the Teams conversation. Runs AFTER the short Adaptive Card has
+        already been delivered, so a PDF failure doesn't block the user
+        from seeing the card."""
+        import base64
+
+        # Persist the PDF next to the engagement files. Keeps the file
+        # available for re-send / download from the admin side.
+        eng_dir = Path(self.store.root) / engagement.engagement_id
+        eng_dir.mkdir(parents=True, exist_ok=True)
+        pdf_path = eng_dir / f"audit_memo_{engagement.engagement_id}.pdf"
+
+        ctx = MemoContext(
+            client_name=(engagement.client_id or "Client"),
+            period_description=(engagement.period_description
+                                or "(period unspecified)"),
+            engagement_id=engagement.engagement_id,
+        )
+        generate_memo_pdf(llm_output, ctx, pdf_path)
+
+        # Teams personal-scope: inline the PDF as a base64 data URL on an
+        # Attachment. Works for files up to ~3-4 MB; our memos are ~100 KB.
+        pdf_bytes = pdf_path.read_bytes()
+        encoded = base64.b64encode(pdf_bytes).decode("ascii")
+        attachment = Attachment(
+            name=pdf_path.name,
+            content_type="application/pdf",
+            content_url=f"data:application/pdf;base64,{encoded}",
+        )
+        await turn_context.send_activity(
+            MessageFactory.text("📄 Full audit memo attached — save it for "
+                                "your records and share with the CPA.")
+        )
+        activity = MessageFactory.attachment(attachment)
+        activity.text = "Audit memo PDF"
+        await turn_context.send_activity(activity)
+        log.info(
+            "agent.cpa_reviewer.pdf_sent engagement=%s path=%s size_kb=%.1f",
+            engagement.engagement_id, pdf_path, len(pdf_bytes) / 1024.0,
         )
 
     _PROFILE_FIELDS: tuple[str, ...] = (
