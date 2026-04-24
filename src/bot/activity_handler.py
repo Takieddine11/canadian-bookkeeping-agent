@@ -27,6 +27,11 @@ import aiohttp
 from botbuilder.core import CardFactory, MessageFactory, TurnContext
 from botbuilder.core.teams import TeamsActivityHandler
 from botbuilder.schema import Attachment
+from botbuilder.schema.teams import (
+    FileConsentCard,
+    FileConsentCardResponse,
+    FileInfoCard,
+)
 
 from src.agents import cleanup_coach as agent_cleanup_coach
 from src.agents import cpa_reviewer as agent_cpa_reviewer
@@ -732,14 +737,20 @@ class AuditBot(TeamsActivityHandler):
         engagement: Engagement,
         llm_output: "agent_cpa_reviewer.LlmReviewOutput",
     ) -> None:
-        """Generate the full CPA-grade audit memo as a PDF and attach it to
-        the Teams conversation. Runs AFTER the short Adaptive Card has
-        already been delivered, so a PDF failure doesn't block the user
-        from seeing the card."""
-        import base64
+        """Generate the full CPA-grade audit memo PDF and ship it to Teams
+        via the File Consent Card flow.
 
-        # Persist the PDF next to the engagement files. Keeps the file
-        # available for re-send / download from the admin side.
+        Teams doesn't accept base64-inlined PDFs as message attachments; the
+        Teams-native way to deliver a file from a bot is:
+        1. Send a FileConsentCard with filename + size + context
+        2. User taps "Accept" in Teams
+        3. Teams invokes ``on_teams_file_consent_accept`` on this handler
+        4. We HTTP PUT the bytes to the upload URL Teams provides
+        5. Teams displays the file inline in the chat
+
+        Runs AFTER the short Adaptive Card has already been delivered, so a
+        PDF failure here doesn't block the user from seeing the card.
+        """
         eng_dir = Path(self.store.root) / engagement.engagement_id
         eng_dir.mkdir(parents=True, exist_ok=True)
         pdf_path = eng_dir / f"audit_memo_{engagement.engagement_id}.pdf"
@@ -751,27 +762,129 @@ class AuditBot(TeamsActivityHandler):
             engagement_id=engagement.engagement_id,
         )
         generate_memo_pdf(llm_output, ctx, pdf_path)
+        size_bytes = pdf_path.stat().st_size
 
-        # Teams personal-scope: inline the PDF as a base64 data URL on an
-        # Attachment. Works for files up to ~3-4 MB; our memos are ~100 KB.
-        pdf_bytes = pdf_path.read_bytes()
-        encoded = base64.b64encode(pdf_bytes).decode("ascii")
+        consent_card = FileConsentCard(
+            description=(
+                f"Full CPA audit memo — {ctx.client_name} "
+                f"({ctx.period_description}). Click Accept to download."
+            ),
+            size_in_bytes=size_bytes,
+            accept_context={
+                "engagement_id": engagement.engagement_id,
+                "filename": pdf_path.name,
+            },
+            decline_context={
+                "engagement_id": engagement.engagement_id,
+                "filename": pdf_path.name,
+            },
+        )
         attachment = Attachment(
+            content=consent_card.serialize(),
+            content_type="application/vnd.microsoft.teams.card.file.consent",
             name=pdf_path.name,
-            content_type="application/pdf",
-            content_url=f"data:application/pdf;base64,{encoded}",
         )
         await turn_context.send_activity(
-            MessageFactory.text("📄 Full audit memo attached — save it for "
-                                "your records and share with the CPA.")
+            MessageFactory.text("📄 Full audit memo is ready — tap **Accept** "
+                                "on the next card to download the PDF.")
         )
-        activity = MessageFactory.attachment(attachment)
-        activity.text = "Audit memo PDF"
-        await turn_context.send_activity(activity)
+        await turn_context.send_activity(
+            MessageFactory.attachment(attachment)
+        )
         log.info(
-            "agent.cpa_reviewer.pdf_sent engagement=%s path=%s size_kb=%.1f",
-            engagement.engagement_id, pdf_path, len(pdf_bytes) / 1024.0,
+            "agent.cpa_reviewer.pdf_consent_sent engagement=%s path=%s size_kb=%.1f",
+            engagement.engagement_id, pdf_path, size_bytes / 1024.0,
         )
+
+    # ---- File Consent Card response handlers ----
+
+    async def on_teams_file_consent_accept(
+        self,
+        turn_context: TurnContext,
+        file_consent_card_response: FileConsentCardResponse,
+    ) -> None:
+        """User tapped Accept on a FileConsentCard — upload the PDF bytes
+        to the URL Teams provides, then send a FileInfoCard so the user
+        sees the file inline in chat."""
+        context = file_consent_card_response.context or {}
+        engagement_id = context.get("engagement_id")
+        filename = context.get("filename")
+        upload_info = file_consent_card_response.upload_info
+        if upload_info is None:
+            log.warning(
+                "file_consent.accept missing upload_info engagement=%s",
+                engagement_id,
+            )
+            return
+
+        if not engagement_id or not filename:
+            log.warning(
+                "file_consent.accept missing context engagement_id=%s filename=%s",
+                engagement_id, filename,
+            )
+            return
+
+        pdf_path = Path(self.store.root) / engagement_id / filename
+        if not pdf_path.exists():
+            log.warning("file_consent.accept pdf not found path=%s", pdf_path)
+            await turn_context.send_activity(MessageFactory.text(
+                "I couldn't find the memo file on disk — it may have been "
+                "cleaned up. Try re-running the audit."
+            ))
+            return
+
+        pdf_bytes = pdf_path.read_bytes()
+        headers = {
+            "Content-Length": str(len(pdf_bytes)),
+            "Content-Range": f"bytes 0-{len(pdf_bytes) - 1}/{len(pdf_bytes)}",
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.put(
+                    upload_info.upload_url, data=pdf_bytes, headers=headers
+                ) as resp:
+                    resp.raise_for_status()
+        except Exception as exc:
+            log.exception(
+                "file_consent.upload_failed engagement=%s error=%s",
+                engagement_id, exc,
+            )
+            await turn_context.send_activity(MessageFactory.text(
+                "Upload to Teams failed — please ask me to resend the memo."
+            ))
+            return
+
+        file_info = FileInfoCard(
+            unique_id=upload_info.unique_id,
+            file_type=upload_info.file_type,
+        )
+        info_attachment = Attachment(
+            content=file_info.serialize(),
+            content_type="application/vnd.microsoft.teams.card.file.info",
+            name=filename,
+            content_url=upload_info.content_url,
+        )
+        await turn_context.send_activity(
+            MessageFactory.attachment(info_attachment)
+        )
+        log.info(
+            "file_consent.upload_ok engagement=%s filename=%s size_kb=%.1f",
+            engagement_id, filename, len(pdf_bytes) / 1024.0,
+        )
+
+    async def on_teams_file_consent_decline(
+        self,
+        turn_context: TurnContext,
+        file_consent_card_response: FileConsentCardResponse,
+    ) -> None:
+        """User declined the consent card. Log + acknowledge."""
+        context = file_consent_card_response.context or {}
+        engagement_id = context.get("engagement_id")
+        log.info("file_consent.declined engagement=%s", engagement_id)
+        await turn_context.send_activity(MessageFactory.text(
+            "No problem — the memo PDF is still saved on the server if you "
+            "change your mind. Ask me to resend it any time."
+        ))
 
     _PROFILE_FIELDS: tuple[str, ...] = (
         "legal_name", "industry", "province", "fiscal_year_end",
