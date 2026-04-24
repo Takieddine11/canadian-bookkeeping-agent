@@ -363,3 +363,190 @@ def test_missing_journal_errors(store: EngagementStore) -> None:
 ])
 def test_normalize_memo(a: str, b: str, match: bool) -> None:
     assert (_normalize_memo(a) == _normalize_memo(b)) is match
+
+
+# ---- Suspicious revenue deposits (non-revenue memos in Sales) -----------------
+
+
+def test_suspicious_revenue_deposit_shareholder_loan_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """A $2,000 deposit to Sales with a memo 'prêt temporaire maman' is the
+    classic non-revenue-buried-in-revenue pattern."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2025", [
+        ("1", "03/02/2025", "Deposit", "", "Maman",
+         "prêt temporaire maman", "Sales - Cafe", "", "2000.00"),
+        ("1", "03/02/2025", "Deposit", "", "Maman",
+         "", "Desjardins Operating", "2000.00", ""),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_recon(store, eng)
+    s = _find(findings, "suspicious_revenue_deposits")
+    assert s is not None
+    assert s.severity == SEVERITY_WARN
+    assert "2,000.00" in s.detail
+    assert "Maman" in s.detail
+
+
+def test_suspicious_revenue_deposit_government_grant_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """Canada Summer Jobs / grant keywords in a revenue-account deposit."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2025", [
+        ("1", "03/05/2025", "Deposit", "", "Receiver General",
+         "Canada Summer Jobs grant Q1", "Sales - Cafe", "", "4800.00"),
+        ("1", "03/05/2025", "Deposit", "", "Receiver General",
+         "", "Desjardins Operating", "4800.00", ""),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_recon(store, eng)
+    s = _find(findings, "suspicious_revenue_deposits")
+    assert s is not None
+    assert "4,800.00" in s.detail
+    assert "canada summer jobs" in s.detail.lower()
+
+
+def test_suspicious_revenue_deposit_unidentified_memo_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """Bookkeeper confession pattern: 'couldnt identify', 'unknown', etc."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2025", [
+        ("1", "05/09/2025", "Deposit", "", "Unknown",
+         "couldnt identify sender", "Sales - Cafe", "", "485.00"),
+        ("1", "05/09/2025", "Deposit", "", "Unknown",
+         "", "Desjardins Operating", "485.00", ""),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_recon(store, eng)
+    s = _find(findings, "suspicious_revenue_deposits")
+    assert s is not None
+    assert "485.00" in s.detail
+
+
+def test_legitimate_sale_not_flagged_as_suspicious(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """A legitimate sale to a named customer with a normal memo should NOT
+    trigger the suspicious-deposit check."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2025", [
+        ("1", "10/06/2025", "Invoice", "", "Café Brûlerie",
+         "Catering - corporate event", "Sales - Catering", "", "1600.00"),
+        ("1", "10/06/2025", "Invoice", "", "Café Brûlerie",
+         "", "Accounts Receivable", "1600.00", ""),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_recon(store, eng)
+    s = _find(findings, "suspicious_revenue_deposits")
+    # When nothing triggers, the check emits an OK finding (by design).
+    assert s is not None
+    assert s.severity == SEVERITY_OK
+
+
+# ---- Near-duplicate vendor-name variation -------------------------------------
+
+
+def test_near_duplicate_vendor_name_variation_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """Two $385 payments, 7 days apart, to 'Carole Boulangerie' and
+    'Caroline's Pastries' — the classic same-supplier-different-spelling
+    pattern. Must be flagged as ASK (WARN), not concluded."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2025", [
+        ("1", "08/01/2025", "Expense", "", "Carole Boulangerie",
+         "pastries for cafe", "COGS - Cafe", "385.00", ""),
+        ("1", "08/01/2025", "Expense", "", "Carole Boulangerie",
+         "", "Desjardins Operating", "", "385.00"),
+        ("2", "15/01/2025", "Expense", "", "Caroline's Pastries",
+         "pastries", "COGS - Cafe", "385.00", ""),
+        ("2", "15/01/2025", "Expense", "", "Caroline's Pastries",
+         "", "Desjardins Operating", "", "385.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_recon(store, eng)
+    near = _find(findings, "near_duplicates_vendor_variation")
+    assert near is not None
+    assert near.severity == SEVERITY_WARN
+    assert "Carole Boulangerie" in near.detail
+    assert "Caroline's Pastries" in near.detail
+
+
+def test_near_duplicate_initial_swap_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """'JM Plomberie' and 'Plomberie MJ' — initial order swap."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2025", [
+        ("1", "11/03/2025", "Expense", "", "JM Plomberie",
+         "plumbing repair", "Repairs", "425.00", ""),
+        ("1", "11/03/2025", "Expense", "", "JM Plomberie",
+         "", "Desjardins Operating", "", "425.00"),
+        ("2", "22/03/2025", "Expense", "", "Plomberie MJ",
+         "plumbing", "Repairs", "425.00", ""),
+        ("2", "22/03/2025", "Expense", "", "Plomberie MJ",
+         "", "Desjardins Operating", "", "425.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_recon(store, eng)
+    near = _find(findings, "near_duplicates_vendor_variation")
+    assert near is not None
+    assert "JM Plomberie" in near.detail
+    assert "Plomberie MJ" in near.detail
+
+
+def test_near_duplicate_beyond_window_not_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """Red-herring coverage: two $285 ads 171 days apart to 'La Gazette
+    Outremont' / 'Outremont Gazette' must NOT be flagged. Different months
+    → periodic purchases, not duplicates."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2025", [
+        ("1", "22/02/2025", "Expense", "", "La Gazette Outremont",
+         "ad buy Feb", "Advertising", "285.00", ""),
+        ("1", "22/02/2025", "Expense", "", "La Gazette Outremont",
+         "", "Desjardins Operating", "", "285.00"),
+        ("2", "12/08/2025", "Expense", "", "Outremont Gazette",
+         "ad buy Aug", "Advertising", "285.00", ""),
+        ("2", "12/08/2025", "Expense", "", "Outremont Gazette",
+         "", "Desjardins Operating", "", "285.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_recon(store, eng)
+    near = _find(findings, "near_duplicates_vendor_variation")
+    assert near is None  # 171 days apart — outside the 30-day window
+
+
+def test_near_duplicate_same_vendor_exact_string_not_flagged_here(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """When both entries use the exact same vendor string, the near-duplicate
+    check should NOT fire — that's _duplicates' territory (stricter match).
+    This separates the two checks so duplicates aren't double-reported."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, "2025", [
+        ("1", "08/01/2025", "Expense", "", "Carole Boulangerie",
+         "pastries", "COGS - Cafe", "385.00", ""),
+        ("1", "08/01/2025", "Expense", "", "Carole Boulangerie",
+         "", "Desjardins Operating", "", "385.00"),
+        ("2", "15/01/2025", "Expense", "", "Carole Boulangerie",
+         "pastries", "COGS - Cafe", "385.00", ""),
+        ("2", "15/01/2025", "Expense", "", "Carole Boulangerie",
+         "", "Desjardins Operating", "", "385.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_recon(store, eng)
+    near = _find(findings, "near_duplicates_vendor_variation")
+    assert near is None  # same vendor string → not our check's problem

@@ -78,6 +78,8 @@ def run(store: EngagementStore, engagement: Engagement) -> list[Finding]:
     findings.extend(_sparse_journal_entry_memos(report))
     findings.extend(_out_of_period(report, engagement.period_description))
     findings.extend(_interac_deposits(report))
+    findings.extend(_suspicious_revenue_deposits(report))
+    findings.extend(_near_duplicates(report))
     findings.extend(_monthly_breakdown(report))
 
     log.info(
@@ -509,12 +511,297 @@ def _monthly_breakdown(report: JournalReport) -> list[Finding]:
 # ---- helpers ------------------------------------------------------------------
 
 
+# Keywords in a Revenue-side credit entry that strongly suggest the deposit
+# is NOT revenue — loans from shareholder/family, government grants, personal
+# transfers, or the bookkeeper's own confession ("unknown", "couldn't identify").
+# FR + EN coverage. All matched case-insensitively as substrings in the memo.
+_NON_REVENUE_MEMO_MARKERS: tuple[str, ...] = (
+    # Loans / shareholder / family transfers
+    "prêt", "pret", "loan",
+    "avance", "advance",
+    "emprunt", "borrow",
+    "remboursement", "remb ", "remb.", "repay",
+    "transfer", "transfert",
+    "bridge", "bridging",
+    "aide ", "help", "assist",
+    "temporaire", "temporary",
+    # Government grants / subsidies
+    "grant", "subvention",
+    "subsidy", "subsidie",
+    "canada summer jobs",
+    "csj ", "emplois d'été",
+    "cewx", "cews",     # legacy wage subsidies
+    "cebas ", "cebas.",  # Canada Emergency Business Account
+    "programme", "program funding",
+    # Bookkeeper confession patterns
+    "unknown", "unidentified",
+    "couldn't identify", "couldnt identify", "could not identify",
+    "non identifié", "non identifie",
+    "inconnu", "à confirmer", "a confirmer",
+    "not sure", "unclear",
+)
+
+
+# Account-name tokens that identify a Revenue GL. Anything from Sales, Revenue,
+# Service Revenue, Product Revenue counts — same treatment for all.
+_REVENUE_ACCOUNT_TOKENS: tuple[str, ...] = (
+    "sales", "revenue", "revenu", "ventes",
+    "income - ", "income -",
+)
+
+
+def _is_revenue_account(account: str) -> bool:
+    a = (account or "").lower()
+    if not a:
+        return False
+    # Exclude obvious non-revenue accounts that contain "revenue" as a word
+    # (e.g., "Deferred Revenue" is a liability, not current revenue).
+    if "deferred" in a or "unearned" in a or "customer deposit" in a:
+        return False
+    # Positive match on revenue tokens.
+    return any(t in a for t in _REVENUE_ACCOUNT_TOKENS)
+
+
+_VENDOR_STOPWORDS = frozenset({
+    "the", "la", "le", "les", "de", "du", "des", "d", "l",
+    "and", "et", "&", "a",
+    # Company-form suffixes
+    "inc", "ltd", "ltée", "ltee", "corp", "co", "llc", "srl",
+})
+
+
+def _vendor_tokens(name: str) -> set[str]:
+    """Return the set of significant tokens from a vendor name, each
+    truncated to 5 chars to absorb minor spelling variation (Carole /
+    Caroline both → 'carol'; Sébastien / Sebastien both → 'sebas'; the
+    apostrophe in Caroline's is treated as a word separator).
+
+    Single-char tokens and stop-words (articles, company forms) are
+    dropped. Two-char tokens (initials like 'JM', 'MJ') are kept but
+    marked as a shared 'initials' token so initial-order swaps match.
+    """
+    n = (name or "").lower()
+    # Strip parenthetical qualifiers like "(artisan)" — these are
+    # descriptors, not part of the business name.
+    n = re.sub(r"\([^)]*\)", " ", n)
+    n = _NONWORD_RE.sub(" ", n)
+    out: set[str] = set()
+    for t in n.split():
+        if not t or t in _VENDOR_STOPWORDS:
+            continue
+        if len(t) == 1:
+            continue  # single-letter articles/initials — noise
+        if len(t) == 2:
+            out.add("initials")  # JM / MJ / MH / etc. all collapse
+            continue
+        out.add(t[:5])
+    return out
+
+
+def _vendor_names_share_token(a: str, b: str) -> bool:
+    """True if vendor names ``a`` and ``b`` share at least one significant
+    token after normalization. Used to catch 'Carole Boulangerie' vs
+    'Caroline's Pastries' (share 'carol'), 'JM Plomberie' vs 'Plomberie MJ'
+    (share 'plomb' + 'initials'), 'Sébastien (artisan)' vs 'Sébastien
+    Dupuis' (share 'sebas')."""
+    return bool(_vendor_tokens(a) & _vendor_tokens(b))
+
+
 def _normalize_memo(memo: str) -> str:
     """Lowercased, punctuation-stripped, whitespace-normalized memo for dup matching."""
     m = memo.lower()
     m = _NONWORD_RE.sub(" ", m)
     m = _WS_RE.sub(" ", m).strip()
     return m
+
+
+_NEAR_DUP_WINDOW_DAYS = 30
+
+
+def _near_duplicates(report: JournalReport) -> list[Finding]:
+    """Flag pairs of entries that LOOK like the same supplier paid twice
+    under name variations — same amount, same account, within a 30-day
+    window, different group IDs, and *different* vendor-name strings that
+    collapse to the same normalized key (Carole Boulangerie / Caroline's
+    Pastries, JM Plomberie / Plomberie MJ, Sébastien (artisan) / Sébastien
+    Dupuis).
+
+    This is a Tier-2 ASK by design — the agent cannot tell whether the
+    two entries are a duplicate or two legitimate visits from the same
+    supplier. The vendor-name variation is the ONLY signal; the CPA asks
+    the client. Compare with ``_duplicates`` which uses an exact-string
+    vendor match as a high-confidence flag.
+
+    Deliberate design choices to avoid false positives:
+    - 30-day window: rules out same-vendor recurring monthly payments
+      (rent, subscriptions) where two entries share name+amount but are
+      5+ weeks apart.
+    - Different raw vendor strings required: if both entries use
+      "Carole's Pastries" exactly, they're either already caught by
+      _duplicates (same memo) or legitimate (different memos).
+    - Amount floor of $100 to avoid Interac-fee noise.
+    """
+    from datetime import timedelta
+
+    _FLOOR = Decimal("100")
+    # Bucket by (amount, account) only — we want to compare different vendor
+    # spellings within the same bucket, so the vendor CAN'T be part of the key.
+    buckets: dict[tuple[Decimal, str], list[JournalLine]] = defaultdict(list)
+    for line in report.lines:
+        amt = line.debit if line.debit != _ZERO else line.credit
+        if abs(amt) < _FLOOR:
+            continue
+        if not (line.name or "").strip():
+            continue  # blank vendor — can't shared-token-match on nothing
+        buckets[(abs(amt), line.account or "")].append(line)
+
+    pairs: list[tuple[JournalLine, JournalLine]] = []
+    seen_pair_ids: set[tuple[str, str]] = set()
+    for lines in buckets.values():
+        if len(lines) < 2:
+            continue
+        unique_by_group = {l.group_id: l for l in lines}
+        # 4+ distinct groups at same amount → recurring (monthly subscription,
+        # rent, weekly payroll) — skip.
+        if len(unique_by_group) > 3:
+            continue
+        sorted_lines = sorted(unique_by_group.values(), key=lambda l: l.txn_date)
+        for i in range(len(sorted_lines)):
+            for j in range(i + 1, len(sorted_lines)):
+                a, b = sorted_lines[i], sorted_lines[j]
+                # Within the 30-day window?
+                if (b.txn_date - a.txn_date) > timedelta(days=_NEAR_DUP_WINDOW_DAYS):
+                    continue
+                # Different raw vendor strings required — same string is
+                # _duplicates territory.
+                if (a.name or "").strip().lower() == (b.name or "").strip().lower():
+                    continue
+                # Must share at least one significant token.
+                if not _vendor_names_share_token(a.name, b.name):
+                    continue
+                pair_id = tuple(sorted([a.group_id, b.group_id]))
+                if pair_id in seen_pair_ids:
+                    continue
+                seen_pair_ids.add(pair_id)
+                pairs.append((a, b))
+
+    if not pairs:
+        return []  # silent — no finding when nothing triggered
+
+    blocks: list[str] = []
+    for a, b in pairs:
+        amt = abs(a.debit if a.debit != _ZERO else a.credit)
+        days_apart = (b.txn_date - a.txn_date).days
+        blocks.append(
+            f"• **${amt:,.2f}** paid twice {days_apart} days apart to vendors "
+            f"with very similar names:\n"
+            f"  - {a.txn_date.isoformat()}  **{a.name}**  "
+            f"(memo: {(a.description or '').strip()[:80] or '—'})\n"
+            f"  - {b.txn_date.isoformat()}  **{b.name}**  "
+            f"(memo: {(b.description or '').strip()[:80] or '—'})"
+        )
+
+    return [Finding(
+        agent=AGENT, check="near_duplicates_vendor_variation", severity=SEVERITY_WARN,
+        title=(
+            f"{len(pairs)} pair(s) of possibly-duplicate payments to the same "
+            f"supplier under different name spellings"
+        ),
+        detail=(
+            "Each pair below shows two payments of the same amount, to the "
+            "same expense account, within 30 days — but with different raw "
+            "vendor-name spellings (e.g., 'Carole Boulangerie' vs "
+            "'Caroline's Pastries', 'JM Plomberie' vs 'Plomberie MJ'). This "
+            "could be a duplicate (bookkeeper entered the second payment "
+            "not realizing the first was the same supplier), OR two "
+            "legitimate visits from the same supplier. The data cannot "
+            "distinguish — the client must.\n\n"
+            + "\n\n".join(blocks)
+        ),
+        proposed_fix=(
+            "For each pair: (a) ask the client whether the second payment "
+            "was a genuinely separate job/delivery or a duplicate, (b) if "
+            "duplicate, reverse the later entry and recover any ITC/ITR "
+            "claimed on it, (c) if legitimate, standardize the vendor name "
+            "in QBO going forward so future cross-checks are clean."
+        ),
+    )]
+
+
+def _suspicious_revenue_deposits(report: JournalReport) -> list[Finding]:
+    """Flag credit entries to Revenue accounts whose memo or payer suggests
+    the deposit is NOT actually revenue. Classic patterns: shareholder/family
+    loans booked to Sales, government grants booked to Sales, unidentified
+    Interac deposits plugged into Sales.
+
+    This is the companion to _interac_deposits — that check focuses on
+    Interac-deposit *classification confirmation*; this one focuses on the
+    narrower, higher-confidence pattern where the memo ITSELF contradicts
+    the revenue coding.
+    """
+    suspects: list[tuple[JournalLine, str]] = []
+    for line in report.lines:
+        if line.credit == _ZERO:
+            continue  # only credit-side entries land in Revenue
+        if not _is_revenue_account(line.account or ""):
+            continue
+        if line.credit < Decimal("100"):
+            continue  # small taxable sales not worth a memo-scan
+        memo_l = (line.description or "").lower()
+        if not memo_l:
+            continue  # blank memo is a separate concern — handled elsewhere
+        for marker in _NON_REVENUE_MEMO_MARKERS:
+            if marker in memo_l:
+                suspects.append((line, marker))
+                break
+
+    if not suspects:
+        return [Finding(
+            agent=AGENT, check="suspicious_revenue_deposits", severity=SEVERITY_OK,
+            title="No revenue entries with non-revenue memo patterns detected",
+        )]
+
+    total = sum((l.credit for l, _ in suspects), _ZERO)
+    blocks: list[str] = []
+    for line, marker in suspects:
+        memo_short = (line.description or "").strip()[:120]
+        blocks.append(
+            f"• {line.txn_date.isoformat()}  ${line.credit:,.2f}  "
+            f"**{line.name or '(no customer)'}**  →  {line.account}\n"
+            f"  memo trigger: *{marker!r}* in \"{memo_short}\"\n"
+            f"  to find in QBO: search the Sales account for "
+            f"{line.txn_date.isoformat()} {line.credit:,.2f}"
+        )
+
+    return [Finding(
+        agent=AGENT, check="suspicious_revenue_deposits", severity=SEVERITY_WARN,
+        title=(
+            f"{len(suspects)} revenue deposit(s) with non-revenue memo hints — "
+            f"${total:,.2f}"
+        ),
+        detail=(
+            "These entries credit a Revenue GL but the memo contains language "
+            "that suggests the deposit is NOT a sale: loans from "
+            "shareholders/family, government grants/subsidies, unidentified "
+            "transfers, or explicit bookkeeper confessions ('unknown', "
+            "'couldn't identify'). Plugging non-revenue deposits into Sales "
+            "is the most common way a small-business P&L gets distorted — "
+            "it inflates revenue, creates phantom sales-tax obligations on "
+            "non-taxable receipts, and hides real transactions (loans, grants, "
+            "personal bridges) that have their own tax treatment.\n\n"
+            "Entries to re-classify:\n\n"
+            + "\n\n".join(blocks)
+        ),
+        proposed_fix=(
+            "For each entry: (a) confirm with the client what the deposit "
+            "actually was, (b) reclassify to the correct account "
+            "(Loan from Shareholders, Government Grant Income — separate "
+            "line on P&L for T2 treatment, Unearned Revenue / Customer "
+            "Deposits, or Shareholder Loan for personal bridges), (c) "
+            "reverse any GST/QST that was charged on the non-revenue "
+            "portion."
+        ),
+    )]
 
 
 def _infer_year(period_label: str | None) -> int | None:
