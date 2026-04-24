@@ -377,6 +377,80 @@ def test_prior_year_bs_completes_three_way_tie(
     assert "1,500.00" in recon.detail   # closing
 
 
+def test_vendor_with_arc_substring_not_treated_as_government(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """Regression: 'Saint Marc Holdings Limited' contains the substring
+    'arc ' (from 'M-ARC' plus the space before 'Holdings'). The older
+    substring-based classifier flagged this as an ARC (Agence du Revenu
+    du Canada) payment. With whole-word acronym matching, it must not."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, [
+        # Monthly rent payment to a landlord named 'Saint Marc Holdings'.
+        ("1", "08/01/2025", "Expense", "", "2000 Saint Marc Holdings Limited",
+         "Office rent January", "Rent Expense", "1471.68", ""),
+        ("1", "08/01/2025", "Expense", "", "2000 Saint Marc Holdings Limited", "",
+         "BMO Chequing", "", "1471.68"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_gov(store, eng)
+    # Classifier should NOT see Saint Marc as a government payee. With no
+    # government payments at all, the agent emits the no_gov_payments info.
+    no_gov = _find(findings, "no_gov_payments")
+    assert no_gov is not None
+
+
+def test_vendors_with_other_false_positive_substrings_not_flagged(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """Additional regression cases for the substring trap:
+    - 'Lucrative Ltd' contains 'cra' inside the word
+    - 'Marquis Inc' contains 'rq' inside the word
+    - 'Sacramento Consulting' contains 'cra' at the start of a word
+    None of these are government payees."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, [
+        ("1", "10/02/2025", "Expense", "", "Lucrative Ltd",
+         "Consulting fee", "Professional Fees", "500.00", ""),
+        ("1", "10/02/2025", "Expense", "", "Lucrative Ltd", "",
+         "BMO Chequing", "", "500.00"),
+        ("2", "15/03/2025", "Expense", "", "Marquis Inc",
+         "Supplies", "Office Supplies", "300.00", ""),
+        ("2", "15/03/2025", "Expense", "", "Marquis Inc", "",
+         "BMO Chequing", "", "300.00"),
+        ("3", "20/04/2025", "Expense", "", "Sacramento Consulting",
+         "Ad campaign", "Advertising", "800.00", ""),
+        ("3", "20/04/2025", "Expense", "", "Sacramento Consulting", "",
+         "BMO Chequing", "", "800.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_gov(store, eng)
+    no_gov = _find(findings, "no_gov_payments")
+    assert no_gov is not None
+
+
+def test_legit_cra_payment_still_detected(
+    store: EngagementStore, tmp_path: Path
+) -> None:
+    """Sanity check: a genuine 'CRA' whole-word payee still triggers the
+    classifier after the tightening."""
+    eng = store.create_engagement("c1", CONV_PERSONAL, period_description="2025")
+    j = tmp_path / "j.csv"
+    _write_journal(j, [
+        ("1", "05/03/2025", "Expense", "", "CRA",
+         "Payroll remittance March", "Payroll Liabilities", "1200.00", ""),
+        ("1", "05/03/2025", "Expense", "", "CRA", "",
+         "BMO Chequing", "", "1200.00"),
+    ])
+    store.attach_document(eng.engagement_id, DOC_JOURNAL, j)
+    findings = run_gov(store, eng)
+    summary = _find(findings, "classification_summary")
+    assert summary is not None
+    assert "Payroll source deductions" in summary.detail
+
+
 def test_no_prior_year_bs_falls_back_to_snapshot(
     store: EngagementStore, tmp_path: Path
 ) -> None:

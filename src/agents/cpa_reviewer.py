@@ -188,6 +188,23 @@ class LlmFinding(BaseModel):
             "write as if to a junior employee, not a senior colleague."
         ),
     )
+    counter_argument: str = Field(
+        default="",
+        description=(
+            "The single STRONGEST reason this finding might be wrong — the "
+            "explanation that a skeptical bookkeeper or client would offer. "
+            "Write it in good faith, not as a formality. Examples: "
+            "'This might not be government at all — the payee name contains "
+            "\"arc\" as a substring but the company is a private landlord; "
+            "check whether the payee is on the government registry.' "
+            "'The meals might qualify for the s.67.1(4) 6-events-per-year "
+            "Christmas-party exception — check the memo for team-event "
+            "language before enforcing 50%.' 'The shareholder loan movement "
+            "might be documented by receipts we haven\\'t seen.' "
+            "If, after writing this, the counter-argument is as strong as "
+            "the finding, downgrade the finding\\'s tier or drop it."
+        ),
+    )
 
 
 class LlmReviewOutput(BaseModel):
@@ -312,6 +329,26 @@ When a sales-tax remittance (GST/QST combined return for QC filers, GST/HST remi
 - Flag any single-leg sales-tax remittance and ask: *"What were the GST and QST amounts per the filed return? The payment should reduce each sub-account by its own portion."*
 
 This is separate from the BS-presentation false positive (FP-1) — a single combined LINE on the BS is fine because QBO's Tax Center maintains the sub-account split internally. The issue here is the underlying JOURNAL entry moving the remittance through ONE sub-account instead of splitting it.
+
+# The skepticism pass — write the STRONGEST counter-argument to every finding
+
+For EVERY finding you keep in `blocking_issues` or `judgment_notes`, you must also write, in the `counter_argument` field, the single strongest reason the finding might be wrong. Not a hedge. Not a disclaimer. The ACTUAL best argument a skeptical bookkeeper, CPA, or client would raise when challenged.
+
+**Why this matters:** the deterministic agents over-flag on purpose — they're built to be sensitive, not specific. Your job is to filter, prioritize, and when findings survive, tell the CPA not just what's wrong but what might make your conclusion wrong. The CPA can then challenge the finding intelligently instead of having to re-audit the evidence.
+
+**Concrete examples of good counter-arguments:**
+
+- Finding: *"9 payments to '2000 Saint Marc Holdings Limited' miscoded as government remittance."* → **Counter-argument:** *"This finding is wrong — Saint Marc Holdings is a private landlord, not a government agency. The deterministic classifier matched the substring 'arc ' inside 'm-ARC Holdings' against the ARC (Agence du Revenu du Canada) acronym. The vendor name and monthly-rent cadence ($1,471 × 9) clearly point at rent expense; there is no government indicator in the file." → The counter-argument is stronger than the evidence; DROP this finding or rephrase it as a rent-coding check.*
+
+- Finding: *"Meals ITC claimed at 100% on EXP-2025-312 — violation of ETA s.236 50% rule."* → **Counter-argument:** *"The memo says 'Christmas team lunch — 3 staff + 2 clients.' Employer-provided meals at an office party or similar event up to 6/year qualify for a 100% ITC exception under ETA s.67.1(4). Per-head cost is ~$84, below the $100/head threshold. The 100% ITC is CORRECT." → Drop the finding as a false positive.*
+
+- Finding: *"Shareholder loan +$6,500 — unexplained."* → **Counter-argument:** *"The BS footnote already attributes the increase to 'reimbursement of expenses paid personally.' While this isn't documentation, the label pre-exists — it's not invented by the current-year bookkeeper. A legitimate expense-reimbursement history through shareholder loan is common and consistent with the data." → Downgrade from Tier-2 ASK to judgment-note with a request for the receipt list.*
+
+**When the counter-argument beats the evidence:** drop the finding, or downgrade its tier, or rewrite it as a request for information. Do NOT include it as a Tier-4 blocker.
+
+**When the finding survives the counter-argument:** include both in the memo. The CPA sees the evidence, the counter-argument, and your judgment call. They can overrule you intelligently.
+
+**This is especially important for deterministic-agent pattern matches** — vendor-name substring matches, amount-based duplicate detection, rate outliers, cash-deposit classifications. Any time a finding's evidence is purely pattern-based, the counter-argument is where you interrogate whether the pattern actually fits the case.
 
 # Tier discipline — ASK, don't ASSUME
 

@@ -66,25 +66,36 @@ _ZERO = Decimal("0")
 
 # Payee patterns: lower-cased, matched as substrings in the journal line's
 # `name` (vendor) field. Cover EN + FR export variants.
-_GOV_PAYEE_PATTERNS: tuple[str, ...] = (
-    # Federal — CRA
+# Government-payee matching is done in two passes to avoid substring false
+# positives. First pass — full, unambiguous phrases (these can safely be
+# matched as case-insensitive substrings because the phrase itself is long
+# and unique to government payees). Second pass — short acronyms that MUST
+# be matched as whole words (\b...\b) because the character sequences
+# appear inside unrelated vendor names (e.g. the "ARC" inside "Saint M-ARC
+# Holdings", "CRA" inside "sacramento", "RQ" inside "Marquis").
+
+_GOV_PAYEE_PHRASES: tuple[str, ...] = (
     "receiver general",
+    "receiver-general",
+    "canada revenue agency",
     "canada revenue",
-    "cra ",   # common in memos
-    " cra",
     "agence du revenu du canada",
-    "arc ",
-    # Quebec — Revenu Québec
     "revenu quebec",
     "revenu québec",
     "revenu qc",
-    "rq ",
-    " rq",
     "gouvernement du québec",
     "gouv. québec",
     "gouv québec",
     "ministère du revenu",
+    "ministere du revenu",
 )
+
+# Acronyms matched as whole words only. "cra", "arc", "rq" are all common
+# character sequences in unrelated vendor names — whole-word matching is
+# essential.
+_GOV_PAYEE_ACRONYMS: frozenset[str] = frozenset({
+    "cra", "arc", "rq",
+})
 
 
 # Category classifier — keyword-based, not exact-phrase. Each rule is a
@@ -299,9 +310,28 @@ def _identify_remittances(report: JournalReport) -> list[_Remittance]:
     return sorted(remittances, key=lambda r: r.line.txn_date)
 
 
+_WORD_RE = re.compile(r"\b[a-zà-ÿ]+\b", re.IGNORECASE)
+
+
 def _is_gov_payee(name: str) -> bool:
-    n = (name or "").lower()
-    return any(p in n for p in _GOV_PAYEE_PATTERNS)
+    """Decide whether a vendor/payee name refers to a government tax payee.
+
+    Two-pass match:
+    1. Phrase match (case-insensitive substring) for unambiguous multi-word
+       strings like "Receiver General", "Canada Revenue Agency".
+    2. Acronym match (whole word only, case-insensitive) for short
+       acronyms like "CRA", "ARC", "RQ" that are easily found as
+       substrings of unrelated vendor names. The whole-word check
+       prevents the historic false-positive on names like
+       "Saint Marc Holdings" (which contains the substring "arc ").
+    """
+    n = (name or "").lower().strip()
+    if not n:
+        return False
+    if any(p in n for p in _GOV_PAYEE_PHRASES):
+        return True
+    words = {m.group(0).lower() for m in _WORD_RE.finditer(n)}
+    return bool(words & _GOV_PAYEE_ACRONYMS)
 
 
 def _classify(representative: JournalLine, group_lines: list[JournalLine]) -> str:

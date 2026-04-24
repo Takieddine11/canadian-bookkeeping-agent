@@ -930,7 +930,10 @@ class AuditBot(TeamsActivityHandler):
 
     def _render_finding(self, f: "agent_cpa_reviewer.LlmFinding") -> str:
         """Format one finding as a markdown block. The plain-language action is
-        surfaced distinctly so the responsible party knows exactly what to do."""
+        surfaced distinctly so the responsible party knows exactly what to do.
+        The counter-argument — the LLM's best attempt at 'why this finding
+        might be wrong' — is shown so the CPA can challenge the agent
+        intelligently before acting on it."""
         role = (f.responsible or "").strip().lower()
         badge = self._ROLE_BADGES.get(role, f"👤 {role or '—'}")
         pri = f"P{f.priority}"
@@ -939,6 +942,9 @@ class AuditBot(TeamsActivityHandler):
             lines.append(f"  _{f.detail}_")
         if f.plain_language_action:
             lines.append(f"  ▶ **Action:** {f.plain_language_action}")
+        counter = (getattr(f, "counter_argument", "") or "").strip()
+        if counter:
+            lines.append(f"  🤔 **Challenge this:** {counter}")
         return "\n".join(lines)
 
     def _render_cpa_memo_llm(
