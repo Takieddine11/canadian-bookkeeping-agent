@@ -433,6 +433,27 @@ If the corporation pays money directly into a shareholder's personal RRSP, three
 
 Always ask for the shareholder's CRA RRSP Deduction Limit Statement before concluding the correct treatment — carry-forward room from prior-year T4 employment may exist. But do NOT treat the corporate contribution as a routine deduction without the full analysis.
 
+# BS imbalance is a DIAGNOSTIC signal, not just an error
+
+When the Balance Sheet doesn't balance (L+E ≠ Total Assets with a material variance), treat the imbalance as a CLUE pointing at other errors elsewhere in the file — not as a standalone "ask the bookkeeper to reconcile" finding. Before demanding a generic trial-balance tie-out, check whether other findings you've already identified would PARTIALLY EXPLAIN the imbalance:
+
+- **Capital items expensed**: a $45K scanner expensed to "Small Equipment" reduced current-year NI (and therefore Equity) while the cash outflow was recorded — so Equity is understated by approximately $45K × (1 − CCA rate × half-year). If multiple capital items are expensed, they compound.
+- **Revenue miscoded as non-revenue** (or vice versa): misclassifying a deposit as revenue inflates NI and Equity without a matching asset adjustment.
+- **Expense timing**: a year-end accrual Dr to expense without the matching Cr to a liability throws the BS off by the accrual amount.
+- **FA subledger variance**: when the FA register doesn't tie to the BS FA at cost, the GL and the subledger are out of sync — usually a disposal not recorded or an addition on the GL not on the register.
+
+**Method:** after identifying the other Tier-4 findings, quantify the approximate equity delta each one implies, then check whether their sum approximates the BS variance. If it does, say so — it tells the bookkeeper which fixes to make first. If it doesn't, the unexplained residual is what still needs reconciliation. Either way, the BS-imbalance finding is stronger when it's CONNECTED to the other findings rather than isolated.
+
+# Loan-payment entries with "principal + interest" memos
+
+When a JE posts an amount to Interest Expense with a memo that says "principal + interest" (or similar), the entry is almost always wrong — loan payments typically amortize between principal (reduces the Loan Payable liability on the BS) and interest (hits the P&L). Three facts frame the finding:
+
+1. Pull the loan amortization schedule to see the actual split for the period.
+2. If no schedule is available, estimate: for a loan with a known opening and closing balance, the total principal paid in the period is (opening − closing − additions + disposals). Divide by the number of payments to approximate per-payment principal. The remainder of each payment is interest.
+3. For the specific entry in question, apply the estimated split: Dr Loan Payable (principal portion) / Dr Interest Expense (interest portion) / Cr Cash (total payment). Reclassify from the current 100%-interest presentation.
+
+This is distinct from a small-business bookkeeper using a combined "Loan payments" account and reclassifying at year-end — that's acceptable if the net effect is right. The error here is when Interest Expense carries the full payment all year and never gets corrected, so both Interest Expense and the Loan Payable balance are wrong at year-end.
+
 # Bookkeeper inattention errors — the "boring pass" checklist
 
 The most common real-world bookkeeping errors are not exotic tax rules — they are mundane inattention mistakes that repeat across files. Scan for these on every engagement, even when the file looks clean:
@@ -452,6 +473,14 @@ The most common real-world bookkeeping errors are not exotic tax rules — they 
 - **Stale carrying balances in Undeposited Funds / Accrued Liabilities / Prepaid** — any clearing or timing account sitting with a material balance for > 30 days needs investigation.
 
 These are boring. They are also where the money actually leaks. Give each finding a one-line Tier 4 slot with the specific entry number and proposed fix; do not let them fall through because they don't look dramatic.
+
+# M&E 50% rule — each client meal with 100% ITC gets its own finding
+
+The s.67.1 M&E 50% rule is mechanical: for every meal/entertainment expense with a memo indicating a client meeting, business development lunch, or prospect dinner, the corporation can deduct 50% and claim 50% of the ITC. If the JE claims 100% of the ITC, it's a reclassification item.
+
+**Do not bundle individual over-claimed client-meal entries into a single "all meals need 50% reversal at year-end" finding.** List each specific transaction (date + vendor + amount + who-with) as its own Tier-3 reclassification target, so the bookkeeper has a specific checklist. One big bucket is harder to act on than five specific entries. A typical dental/medical/service-business audit will surface 3-8 such entries over a year — list them.
+
+Exception (ETA s.67.1(4)) covered separately below: staff parties / office events up to 6/year at ≤$100/head get 100% ITC.
 
 # ETA s.67.1(4) exceptions to the M&E 50% rule — do NOT flag these as errors
 
